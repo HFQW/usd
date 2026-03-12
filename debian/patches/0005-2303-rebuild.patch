@@ -1,0 +1,403 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Tue, 23 May 2023 14:06:57 +0800
+Subject: 2303 rebuild
+
+---
+ plugins/kds/widget.cpp            |   7 +--
+ plugins/xrandr/udev-input.cpp     | 115 ++++++++++++++++++++++++++++++++++++++
+ plugins/xrandr/udev-input.h       |  48 ++++++++++++++++
+ plugins/xrandr/xrandr-manager.cpp |  54 +++++++++++++-----
+ plugins/xrandr/xrandr-manager.h   |   6 +-
+ plugins/xrandr/xrandr.pro         |   6 +-
+ 6 files changed, 214 insertions(+), 22 deletions(-)
+ create mode 100644 plugins/xrandr/udev-input.cpp
+ create mode 100644 plugins/xrandr/udev-input.h
+
+diff --git a/plugins/kds/widget.cpp b/plugins/kds/widget.cpp
+index f0ac243..a9ecbee 100644
+--- a/plugins/kds/widget.cpp
++++ b/plugins/kds/widget.cpp
+@@ -147,15 +147,12 @@ void Widget::setupComponent()
+         const QString outputName = metadata[QStringLiteral("name")].toString();
+ 
+         if (firstScreen.isEmpty()){
+-            firstScreen = outputName;
++            firstScreen = "First Screen";
+             continue;
+         }
+ 
+         if (secondScreen.isEmpty()) {
+-            secondScreen = outputName;
+-	    if(screensParamList.length() > 2) {
+-                secondScreen = "Vice Screen";
+-	    }
++            secondScreen = "Vice Screen";
+             continue;
+         }
+ 
+diff --git a/plugins/xrandr/udev-input.cpp b/plugins/xrandr/udev-input.cpp
+new file mode 100644
+index 0000000..361a339
+--- /dev/null
++++ b/plugins/xrandr/udev-input.cpp
+@@ -0,0 +1,115 @@
++#include "udev-input.h"
++
++#include <QString>
++
++char* udevInput::subDev[] = {"usb_interface"};
++
++udevInput::udevInput(QObject *parent){
++
++}
++
++
++void udevInput::print_device(struct udev_device *device, const char *source, int env)
++{
++    struct timeval tv;
++    struct timezone tz;
++    gettimeofday(&tv, &tz);
++
++    printf("%-6s[%llu.%06u] %-8s (type)%s (tags)%s\n \t%s (%s)\n",
++	       source,
++	       (unsigned long long) tv.tv_sec, (unsigned int) tv.tv_usec,
++	       udev_device_get_action(device),
++               udev_device_get_devtype(device),
++               udev_device_get_property_value(device,"TAGS"),
++	       udev_device_get_devpath(device),
++	       udev_device_get_subsystem(device));
++
++    if (env) {
++        struct udev_list_entry *list_entry;
++        udev_list_entry_foreach(list_entry, udev_device_get_properties_list_entry(device))
++                printf("%s=%s\n",
++                       udev_list_entry_get_name(list_entry),
++                       udev_list_entry_get_value(list_entry));
++        printf("\n");
++    }
++}
++
++
++int udevInput::udevadm_monitor(struct udev *udev)
++{
++    int env = 0;
++	int print_kernel = 1;
++	struct udev_monitor *kernel_monitor = NULL;
++	fd_set readfds;
++	int rc = 0;
++ 
++	printf("monitor will print the received events.\n");
++	
++	if (print_kernel) {
++		kernel_monitor = udev_monitor_new_from_netlink(udev, "udev"); //这里的udev源码中没有"udev"这个参数，不加进去返回值就为NULL，所以要加这个
++		if (kernel_monitor == NULL) {
++			rc = 3;
++			printf("udev_monitor_new_from_netlink() error\n");
++			goto out;
++		}
++ 
++		if (udev_monitor_enable_receiving(kernel_monitor) < 0) {
++			rc = 4;
++			goto out;
++		}
++	}
++	
++	printf("\n");
++	while (1) {
++		int fdcount;
++		FD_ZERO(&readfds);
++ 
++		if (kernel_monitor != NULL)
++			FD_SET(udev_monitor_get_fd(kernel_monitor), &readfds);
++ 
++		fdcount = select(udev_monitor_get_fd(kernel_monitor)+1, &readfds, NULL, NULL, NULL);
++		if (fdcount < 0) {
++			if (errno != EINTR)
++				fprintf(stderr, "error receiving uevent message: %m\n");
++			continue;
++		}
++ 
++		if ((kernel_monitor != NULL) && FD_ISSET(udev_monitor_get_fd(kernel_monitor), &readfds)) {
++			struct udev_device *device;
++			device = udev_monitor_receive_device(kernel_monitor);
++			if (device == NULL)
++				continue;
++			//print_device(device, "UEVENT", env);
++            
++            // char *type = udev_device_get_devtype(device);
++            if( udev_device_get_devtype(device) && (strcmp(udev_device_get_devtype(device),subDev[usb_interface])== 0)) {
++                printf(" ----- [%s]\n ",subDev[usb_interface]);
++                if(strcmp(udev_device_get_action(device),"bind") == 0) {
++                    printf(" emit signal\n ");
++                    Q_EMIT plugEvent(true);
++                }
++            }
++
++			udev_device_unref(device);
++		}
++ 
++	}
++ 
++out:
++	udev_monitor_unref(kernel_monitor);
++	return rc;
++}
++
++void udevInput::run()
++{
++    struct udev *udev;
++
++    udev = udev_new();
++    if (!udev) {
++        udev_unref(udev);
++    }
++
++    udevadm_monitor(udev);
++
++    udev_unref(udev);
++}
+diff --git a/plugins/xrandr/udev-input.h b/plugins/xrandr/udev-input.h
+new file mode 100644
+index 0000000..b2e3028
+--- /dev/null
++++ b/plugins/xrandr/udev-input.h
+@@ -0,0 +1,48 @@
++#ifndef UDEV_INPPUT_H
++#define UDEV_INPPUT_H
++
++#include<QThread>
++#include<QDebug>
++extern "C" {
++#include <unistd.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <errno.h>
++#include <signal.h>
++#include <sys/time.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <sys/select.h>
++#include <linux/types.h>
++#include <linux/netlink.h>
++#include <libudev.h>
++}
++
++enum deviceType {
++    usb_interface,
++    sound,
++    usb
++};
++
++class udevInput : public QThread
++{
++    Q_OBJECT
++public:
++    udevInput(QObject* parent = nullptr);
++    void print_device(struct udev_device *device, const char *source, int env);
++    int udevadm_monitor(struct udev *udev);
++    //    void  sig_handler(int signum);
++    static char *subDev[sizeof(deviceType)*3];
++
++Q_SIGNALS:
++    void plugEvent(bool);
++
++    //public Q_SLOTS:
++    //    void myThreadSlot(const int);
++protected:
++    void run() override;
++};
++
++
++
++#endif
+\ No newline at end of file
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index 3338d28..fbcb2ce 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -105,7 +105,7 @@ XrandrManager::XrandrManager():
+         connect(m_statusManagerDbus, SIGNAL(mode_change_signal(bool)),this,SLOT(doTabletModeChanged(bool)));
+         connect(m_statusManagerDbus, SIGNAL(rotations_change_signal(QString)),this,SLOT(doRotationChanged(QString)));
+     } else {
+-        USD_LOG(LOG_ERR, "m_statusManagerDbus error");
++        USD_LOG(LOG_ERR, "m_statusManagerDbus error !!!!!!");
+     }
+ 
+     m_onUsbScreenTimer->setSingleShot(true);
+@@ -130,22 +130,43 @@ XrandrManager::XrandrManager():
+ 
+     connect(m_xrandrDbus,&xrandrDbus::controlScreen,this,&XrandrManager::doCalibrate);
+ 
+-    QDBusConnection::sessionBus().connect(QString("org.kde.KScreen"),
++    bool ret = QDBusConnection::sessionBus().connect(QString("org.kde.KScreen"),
+                                                      QString("/backend"),
+                                                      QString("org.kde.kscreen.Backend"),
+                                                      QString("configChanged"),
+                                                      this,
+-                                                     SLOT(ChangedSlot(QVariantMap)));
++                                                     SLOT(configChangedSlot(QVariantMap)));
++
++    udevThread = new udevInput;
++    udevThread->start();
++    connect(udevThread,&udevInput::plugEvent,this,&XrandrManager::touchHotPlugSlot);
+ 
+ }
+ 
++void XrandrManager::touchHotPlugSlot(bool action)
++{
++    static bool isRunning = false;
++    USD_LOG(LOG_DEBUG,"---- touch hot plug:%d ----",action);
++    if(action) {
++        if(!isRunning) {
++	    isRunning = true;
++	    QTimer::singleShot(350,this,[=]() {
++	        USD_LOG(LOG_DEBUG,"need to calibrate touch device ? try it");
++		calibrateTouchDevice();
++		isRunning = false;
++            });
++	}    
++    }
++}
+ 
+ //获取
+ void XrandrManager::configChangedSlot(QVariantMap config)
+ {
++    qDebug() << " --------------------------------------";
+     if(isApplied) {
+         isApplied = false;
+         sendOutputsModeToDbus();
++        calibrateTouchDevice();
+     }
+     else {
+ 	isApplied = false;
+@@ -237,14 +258,9 @@ find_touchscreen_device(Display* display, XIDeviceInfo *dev)
+     }
+ 
+     for (int j = 0; j < dev->num_classes; j++) {
+-        if (dev->classes[j]->type == XIValuatorClass) {
+-            XIValuatorClassInfo *t = (XIValuatorClassInfo*)dev->classes[j];
+-            // 如果当前的设备是绝对坐标映射 则认为该设备需要进行一次屏幕映射
+-
+-            if (t->mode == XIModeAbsolute) {
+-                USD_LOG(LOG_DEBUG,"%s type:%d mode:%d", dev->name, dev->classes[i]->type, t->mode);
++        if (dev->classes[j]->type == XITouchClass) {
++                USD_LOG(LOG_DEBUG,"%s type:%d ", dev->name, dev->classes[i]->type);
+                 return true;
+-            }
+         }
+     }
+     return false;
+@@ -941,9 +957,6 @@ void XrandrManager::calibrateTouchDevice()
+ 
+     if (oldOutputs != nullptr) {
+         Q_FOREACH(const KScreen::OutputPtr &oldOutput, oldOutputs->outputs()) {
+-            if (needSetMapTouchDevice) {
+-                break;
+-            }
+             Q_FOREACH(const KScreen::OutputPtr &output,m_outputsConfig->data()->outputs()) {
+                 if(output->isConnected() && oldOutput->name() == output->name()) {
+                     if(oldOutput->currentModeId() != output->currentModeId() || oldOutput->pos() != output->pos()
+@@ -951,7 +964,19 @@ void XrandrManager::calibrateTouchDevice()
+                             oldOutput->isPrimary() != output->isPrimary() || oldOutput->isEnabled() != output->isEnabled() ||
+                             oldOutput->isConnected() != output->isConnected()) {
+                         needSetMapTouchDevice = true;
++			break;
+                     }
++		    if(output->rotation() != static_cast<KScreen::Output::Rotation>(1)) {
++		        needSetMapTouchDevice = true;
++			USD_LOG(LOG_DEBUG,"rotated，net set map touch:%d",needSetMapTouchDevice);
++			break;
++		    }
++		    if(output->pos() != QPoint(0,0)) {
++		        needSetMapTouchDevice = true;
++			USD_LOG(LOG_DEBUG,"not original posi，net set map touch:%d",needSetMapTouchDevice);
++			break;
++		    }
++
+                     if(oldOutput->currentMode().isNull() && output->currentMode().isNull()) {
+                         continue;
+                     }
+@@ -961,6 +986,7 @@ void XrandrManager::calibrateTouchDevice()
+                     } else {
+                         if(oldOutput->currentMode()->size() != output->currentMode()->size()) {
+                             needSetMapTouchDevice = true;
++			    break;
+                         }
+                     }
+                 }
+@@ -973,6 +999,7 @@ void XrandrManager::calibrateTouchDevice()
+                 } else {
+                     if(oldOutput->currentMode()->size() != output->currentMode()->size()) {
+                         needSetMapTouchDevice = true;
++			break;
+                     }
+                 }
+             }
+@@ -1044,7 +1071,6 @@ void XrandrManager::applyConfig()
+ 
+             USD_LOG(LOG_ERR,"--|apply success|--");
+             calibrateTouchDevice();
+-//            sendOutputsModeToDbus();
+             isApplied = true;
+ 
+             m_outputsConfig->setScreenMode(m_outputModeEnum.valueToKey(discernScreenMode()));
+diff --git a/plugins/xrandr/xrandr-manager.h b/plugins/xrandr/xrandr-manager.h
+index b2b5656..fc5a5b4 100644
+--- a/plugins/xrandr/xrandr-manager.h
++++ b/plugins/xrandr/xrandr-manager.h
+@@ -50,6 +50,7 @@
+ #include "xrandr-config.h"
+ #include "usd_base_class.h"
+ #include "usd_global_define.h"
++#include "udev-input.h"
+ 
+ #define SAVE_CONFIG_TIME 800
+ 
+@@ -130,6 +131,7 @@ public Q_SLOTS:
+     /*台式机screen旋转后触摸*/
+     void doCalibrate(const QString screenMap);
+ 
++    void touchHotPlugSlot(bool action);
+     QString getOutputsInfo();
+ protected:
+     QMultiMap<QString, QString> m_mateFileTag; //存放标签的属性值
+@@ -163,12 +165,14 @@ private:
+     QTimer                *m_screenSignalTimer = nullptr;
+     QTimer                *m_offUsbScreenTimer = nullptr;
+     QTimer                *m_onUsbScreenTimer = nullptr;
+-
++  
++    udevInput             *udevThread = nullptr;
+     QMetaEnum             m_outputModeEnum;
+     QGSettings            *m_xrandrSettings = nullptr;
+     QStringList           m_modesChangeOutputs;
+ 
+     QDBusInterface        *m_ukccDbus = nullptr;
++    QDBusInterface        *m_kscreenDbus = nullptr;
+     QDBusInterface        *m_statusManagerDbus = nullptr;
+     QList<touchpadMap*>    m_touchMapList; //存储已映射的关系
+ 
+diff --git a/plugins/xrandr/xrandr.pro b/plugins/xrandr/xrandr.pro
+index e58d4b1..8e6a399 100644
+--- a/plugins/xrandr/xrandr.pro
++++ b/plugins/xrandr/xrandr.pro
+@@ -35,7 +35,8 @@ SOURCES += \
+     xrandr-dbus.cpp \
+     xrandr-manager.cpp \
+     xrandr-output.cpp \
+-    xrandr-plugin.cpp
++    xrandr-plugin.cpp \
++    udev-input.cpp
+ 
+ HEADERS += \
+     xrandr-adaptor.h \
+@@ -43,7 +44,8 @@ HEADERS += \
+     xrandr-dbus.h \
+     xrandr-manager.h \
+     xrandr-output.h \
+-    xrandr-plugin.h
++    xrandr-plugin.h \
++    udev-input.h
+ 
+ xrandr_lib.path  = $${PLUGIN_INSTALL_DIRS}
+ xrandr_lib.files = $$OUT_PWD/libxrandr.so

@@ -1,0 +1,481 @@
+From: weijiongchao <you@example.com>
+Date: Mon, 10 Apr 2023 13:45:50 +0800
+Subject: =?utf-8?b?a2Rz55qEVUnosIPmlbQ=?=
+
+---
+ plugins/kds/res/zh_CN.ts          |   8 +-
+ plugins/kds/widget.cpp            |   3 +
+ plugins/xrandr/xrandr-config.cpp  |  19 ++--
+ plugins/xrandr/xrandr-dbus.cpp    |   9 ++
+ plugins/xrandr/xrandr-dbus.h      |   3 +
+ plugins/xrandr/xrandr-manager.cpp | 234 +++++++++++++++++++++++++++++++-------
+ plugins/xrandr/xrandr-manager.h   |   9 +-
+ 7 files changed, 230 insertions(+), 55 deletions(-)
+
+diff --git a/plugins/kds/res/zh_CN.ts b/plugins/kds/res/zh_CN.ts
+index b156a61..8d4b925 100644
+--- a/plugins/kds/res/zh_CN.ts
++++ b/plugins/kds/res/zh_CN.ts
+@@ -16,7 +16,7 @@
+     <message>
+         <location filename="../kdswidget.cpp" line="223"/>
+         <source>First Display</source>
+-        <translation>仅显示电脑屏幕</translation>
++        <translation>第一屏</translation>
+     </message>
+     <message>
+         <location filename="../kdswidget.cpp" line="228"/>
+@@ -58,7 +58,7 @@
+     <message>
+         <location filename="../widget.cpp" line="137"/>
+         <source>First Screen</source>
+-        <translation>仅显示电脑屏幕</translation>
++        <translation>第一屏</translation>
+     </message>
+     <message>
+         <location filename="../widget.cpp" line="145"/>
+@@ -71,9 +71,9 @@
+         <translation>扩展</translation>
+     </message>
+     <message>
+-        <location filename="../widget.cpp" line="161"/>
++        <location filename="../widget.cpp" line="157"/>
+         <source>Vice Screen</source>
+-        <translation>仅显示第二屏幕</translation>
++        <translation>其它屏</translation>
+     </message>
+     <message>
+         <location filename="../widget.cpp" line="161"/>
+diff --git a/plugins/kds/widget.cpp b/plugins/kds/widget.cpp
+index c5bb9a8..f0ac243 100644
+--- a/plugins/kds/widget.cpp
++++ b/plugins/kds/widget.cpp
+@@ -153,6 +153,9 @@ void Widget::setupComponent()
+ 
+         if (secondScreen.isEmpty()) {
+             secondScreen = outputName;
++	    if(screensParamList.length() > 2) {
++                secondScreen = "Vice Screen";
++	    }
+             continue;
+         }
+ 
+diff --git a/plugins/xrandr/xrandr-config.cpp b/plugins/xrandr/xrandr-config.cpp
+index 4367e2c..4cda0b8 100644
+--- a/plugins/xrandr/xrandr-config.cpp
++++ b/plugins/xrandr/xrandr-config.cpp
+@@ -442,18 +442,15 @@ bool xrandrConfig::writeFile(const QString &filePath, bool state)
+     if (screenConnectedCount > 1) {
+         QFile backFile(fileModeConfigPath());
+         if (backFile.open(QIODevice::WriteOnly)) {//确保对应模式保存的参数一致
+-            if (point.x() == point.y() && point.x() == 0) {
+-                if (mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::cloneScreenMode) ||
+-                        mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::secondScreenMode)||
+-                        mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::firstScreenMode)) {
+-                    backFile.write(QJsonDocument::fromVariant(outputList).toJson());
+-                }
+-            } else {
+-                if (mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::extendScreenMode)) {
+-                    backFile.write(QJsonDocument::fromVariant(outputList).toJson());
+-                }
++         
++            if (mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::cloneScreenMode) ||
++                mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::secondScreenMode)||
++                mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::firstScreenMode)) {
++                backFile.write(QJsonDocument::fromVariant(outputList).toJson());
++            }
++            if (mScreenMode == metaEnum.valueToKey(UsdBaseClass::eScreenMode::extendScreenMode)) {
++                backFile.write(QJsonDocument::fromVariant(outputList).toJson());
+             }
+-
+         } else {
+             USD_LOG(LOG_DEBUG,"write file [%s] fail.cuz:%s.",file.fileName().toLatin1().data(),backFile.errorString().toLatin1().data());
+         }
+diff --git a/plugins/xrandr/xrandr-dbus.cpp b/plugins/xrandr/xrandr-dbus.cpp
+index 41f6c14..c2d172a 100644
+--- a/plugins/xrandr/xrandr-dbus.cpp
++++ b/plugins/xrandr/xrandr-dbus.cpp
+@@ -106,4 +106,13 @@ QString xrandrDbus::controlScreenSlot(const QString &conRotation)
+     return QString("Get messageMethod reply: %1").arg(conRotation);
+ }
+ 
++int xrandrDbus::setOutputEnable(QString outputName,bool isEnabled,QString appName){
++    USD_LOG(LOG_DEBUG,"outputName :%s, appName:%s",outputName.toLatin1().data(), appName.toLatin1().data());
++    Q_EMIT xrandrManager->setOutputEnable(outputName,isEnabled);
++    return true;
++}
+ 
++bool xrandrDbus::getOutputEnable(QString outputName,QString appName){
++    USD_LOG(LOG_DEBUG,"outputName :%s, appName:%s",outputName.toLatin1().data(), appName.toLatin1().data());
++    return xrandrManager->getOutputEnable(outputName);
++}
+\ No newline at end of file
+diff --git a/plugins/xrandr/xrandr-dbus.h b/plugins/xrandr/xrandr-dbus.h
+index 0613f79..cec9a1c 100644
+--- a/plugins/xrandr/xrandr-dbus.h
++++ b/plugins/xrandr/xrandr-dbus.h
+@@ -41,6 +41,9 @@ public Q_SLOTS:
+     int setScreenMode(QString modeName, QString appName);
+     int getScreenMode(QString appName);
+ 
++    int setOutputEnable(QString outputName,bool isEnabled,QString appName);
++    bool getOutputEnable(QString outputName,QString appName);
++    
+     int setScreensParam(QString screensParam, QString appName);
+     QString getScreensParam(QString appName);
+ 
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index 97effb2..b08a460 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -129,6 +129,27 @@ XrandrManager::XrandrManager():
+     });
+ 
+     connect(m_xrandrDbus,&xrandrDbus::controlScreen,this,&XrandrManager::doCalibrate);
++
++    QDBusConnection::sessionBus().connect(QString("org.kde.KScreen"),
++                                                     QString("/backend"),
++                                                     QString("org.kde.kscreen.Backend"),
++                                                     QString("configChanged"),
++                                                     this,
++                                                     SLOT(ChangedSlot(QVariantMap)));
++
++}
++
++
++//获取
++void XrandrManager::configChangedSlot(QVariantMap config)
++{
++    if(isApplied) {
++        isApplied = false;
++        sendOutputsModeToDbus();
++    }
++    else {
++	isApplied = false;
++    }
+ }
+ 
+ void XrandrManager::getInitialConfig()
+@@ -1013,7 +1034,7 @@ void XrandrManager::applyConfig()
+     Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+         USD_LOG_SHOW_OUTPUT(output);
+     }
+-    if (m_outputsConfig->canBeApplied()) {
++    if (m_outputsConfig->canBeApplied() || true) {
+         m_isSetting = true;
+         connect(new KScreen::SetConfigOperation(m_outputsConfig->data()),
+                 &KScreen::SetConfigOperation::finished,
+@@ -1023,7 +1044,8 @@ void XrandrManager::applyConfig()
+ 
+             USD_LOG(LOG_ERR,"--|apply success|--");
+             calibrateTouchDevice();
+-            sendOutputsModeToDbus();
++//            sendOutputsModeToDbus();
++            isApplied = true;
+ 
+             m_outputsConfig->setScreenMode(m_outputModeEnum.valueToKey(discernScreenMode()));
+             writeConfig();//
+@@ -1284,8 +1306,18 @@ void XrandrManager::doOutputChanged(KScreen::Output *senderOutput)
+             if (outputConnectCount) {
+                 std::unique_ptr<xrandrConfig> MonitoredConfig  = m_outputsConfig->readFile(false);
+                 if (MonitoredConfig!=nullptr) {
++                    std::unique_ptr<xrandrConfig> MonitoredConfig  = m_outputsConfig->readFile(false);
+                     m_outputsConfig = std::move(MonitoredConfig);
+-                     USD_LOG(LOG_DEBUG,"read config file error! ");
++                    this->isDefaultStatus = false;
++                    Q_FOREACH(const KScreen::OutputPtr &output,m_outputsConfig->data()->outputs()) {
++                        //发现插进来的显示器是关的，应当设置为开启
++                        if (output->name()==senderOutput->name() && senderOutput->isConnected() && !output->isEnabled() ) {
++                            this->isDefaultStatus = true;
++                            setOutputsModeToExtend();
++                            this->isDefaultStatus = false;
++                            return;
++                        }
++                    }
+                 } else {
+                     USD_LOG(LOG_DEBUG,"read config file error! ");
+                     if (outputConnectCount>1) {
+@@ -1863,10 +1895,12 @@ void XrandrManager::setOutputsModeToClone(bool needReadFormConfig)
+     if (false == checkPrimaryOutputsIsSetable()) {
+         return;
+     }
+-
+-    if (needReadFormConfig) {
+-        if (readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode::cloneScreenMode)) {
+-            return;
++    
++    if(!isDefaultStatus) {
++        if (needReadFormConfig) {
++            if (readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode::cloneScreenMode)) {
++                return;
++            }
+         }
+     }
+ 
+@@ -1935,6 +1969,116 @@ void XrandrManager::setOutputsModeToClone(bool needReadFormConfig)
+     }
+ }
+ 
++void XrandrManager::setOutputEnable(QString outputName,bool isEnabled)
++{
++    
++    USD_LOG(LOG_DEBUG," ---------- 设置 output enable----------");
++
++     //假设是扩展模式下
++    int dstX = 0;
++    int dstY = 0;
++    std::unique_ptr<xrandrConfig> MonitoredConfig  = m_outputsConfig->readFile(false);
++    USD_LOG(LOG_DEBUG, "Output->name:%s",outputName.toLatin1().data());
++    if (MonitoredConfig!=nullptr) {   //如果多屏开启时，文件被用户删了，此时是读不到的
++        int curtPosX = 0,curtPosY = 0;
++        if(isEnabled) {
++            //广度优先
++            Q_FOREACH(const KScreen::OutputPtr &output,MonitoredConfig->data()->outputs()) {
++                if(!output->isConnected() || !output->isEnabled()) {
++                    continue;
++                }
++                curtPosX = output->pos().x() + output->currentMode()->size().width();
++                curtPosY = output->pos().y();
++               
++                if(dstX < curtPosX) {
++                    dstX = curtPosX;
++                    dstY = curtPosY;        //这时候获取的dstY可能是Y方向屏幕的某一个
++                }
++                else if(dstX == curtPosX && dstY < curtPosY) {  //存在相同的最大X
++                        dstY = curtPosY;  
++                }
++            }
++            
++	        Q_FOREACH(const KScreen::OutputPtr &output, MonitoredConfig->data()->outputs()) {
++                if(output->name().toLatin1().data() == outputName) {
++
++                    if(output->isConnected() && output->isEnabled()!= isEnabled) {
++                        float refreshRate = 0.0;
++                        int screenSize = 0;
++                        output->setRotation(static_cast<KScreen::Output::Rotation>(1));
++                        Q_FOREACH(auto Mode, output->modes()){
++                            if (Mode->size().width()*Mode->size().height() < screenSize){
++                                continue;
++                            } else if (Mode->size().width()*Mode->size().height() == screenSize) {
++                                if (Mode->refreshRate() <= refreshRate) {
++                                    continue;
++                                }
++                            }
++
++                            refreshRate = Mode->refreshRate();
++                            screenSize = Mode->size().width()*Mode->size().height();
++                            output->setCurrentModeId(Mode->id());
++                        }
++
++                        output->setPos(QPoint(dstX,dstY));
++                        output->setEnabled(true);  
++          
++                        applyConfig();
++		            }
++                    break;
++                }
++            }
++        }
++        else {
++            //镜像模式下，不支持对单个屏幕操作
++            //因此，考虑（广义）扩展就行
++            bool hadFindPrimay = false;
++            Q_FOREACH(const KScreen::OutputPtr &output,MonitoredConfig->data()->outputs()) {
++                if(!output->isConnected() || !output->isEnabled())
++                    continue;
++                if(output->name().toLatin1().data() == outputName) {
++                    output->setEnabled(false);
++                    continue;
++                }
++
++                if (!hadFindPrimay) {
++                    output->setPrimary(true);
++                    hadFindPrimay = true;
++                } else {
++                    if (output->isPrimary()){
++                        continue;
++                    }
++                }
++               
++                output->setPos(QPoint(dstX,0));
++                dstX += output->currentMode()->size().width();
++            }
++
++        }
++
++        m_outputsConfig = std::move(MonitoredConfig);
++        m_outputsConfig->writeFile(false);
++        m_outputsConfig->readFile(false);
++        applyConfig();
++        return;
++    }
++
++}
++
++bool XrandrManager::getOutputEnable(QString outputName)
++{
++    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
++        if(output->name().toLatin1().data() == outputName) {
++            if(output->isConnected()) {
++                return output->isEnabled();
++            }
++            return false;
++        }
++        return false;
++    }
++}
++
++
+ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+ {
+     int posX = 0;
+@@ -2036,8 +2180,10 @@ void XrandrManager::setOutputsModeToExtend()
+         return;
+     }
+ 
+-    if (readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode::extendScreenMode)) {
+-        return;
++    if(!isDefaultStatus) { 
++        if (readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode::extendScreenMode)) {
++            return;
++        }
+     }
+ 
+     Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+@@ -2231,7 +2377,9 @@ void XrandrManager::setOutputsMode(QString modeName)
+         USD_LOG(LOG_DEBUG,"set mode fail can't set to %s",modeName.toLatin1().data());
+         return;
+     }
+-    sendOutputsModeToDbus();
++
++    //每次applyconfig时已经发了，没必要
++//    sendOutputsModeToDbus();
+ }
+ 
+ /*
+@@ -2239,52 +2387,60 @@ void XrandrManager::setOutputsMode(QString modeName)
+ */
+ UsdBaseClass::eScreenMode XrandrManager::discernScreenMode()
+ {
+-    bool firstScreenIsEnable = false;
+-    bool secondScreenIsEnable = false;
+-    bool hadFindFirstScreen = false;
++#define  OnlyFirstScreen  ((guint8)0x01 << 0) 
+ 
+     QPoint firstScreenQPoint;
+-    QPoint secondScreenQPoint;
+-
+     QSize firstScreenQsize;
+-    QSize secondScreenQsize;
+ 
+-    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+-        if (output->isConnected()) {
+-            if (false == hadFindFirstScreen) {
+-                firstScreenIsEnable = output->isEnabled();
+-                if (output->isEnabled()  && output->currentMode()!=nullptr) {
+-                    firstScreenQsize = output->currentMode()->size();
+-                    firstScreenQPoint = output->pos();
+-                }
+-                hadFindFirstScreen = true;
++    bool hadFindFirstScreen = false;
++    bool isGeneralClone = true;   //广义克隆：两个副屏之间相同、第一屏和第三屏相同但和第二屏不同等情况
++    uint8_t screenEnableStatus = 0x00;   
+ 
++    int num = 0;
++    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
++        if (output->isConnected()) {          
++            
++    	    if (output->isEnabled() && output->currentMode()!=nullptr) {
++                    screenEnableStatus |= (0x01 << num);
++
++                    if(!hadFindFirstScreen) {
++                        firstScreenQsize = output->currentMode()->size();
++                        firstScreenQPoint = output->pos();
++                        hadFindFirstScreen = true;
++                    }
++                    else {
++    		            //只要出现一次不相等，就没必要继续比较了
++    		            if(!isGeneralClone)
++                            continue;
++                        if( firstScreenQsize != output->currentMode()->size() || firstScreenQPoint != output->pos()) {
++                            isGeneralClone = false;
++                            USD_LOG(LOG_DEBUG," --   isGeneralClone: %d \n",isGeneralClone);
++    		            }
++                    }
+             } else {
+-                secondScreenIsEnable = output->isEnabled();
+-                secondScreenQPoint = output->pos();
+-                if (secondScreenIsEnable && output->currentMode()!=nullptr) {
+-                    secondScreenQsize = output->currentMode()->size();
+-                }
+-                break;
++                USD_LOG(LOG_DEBUG,"screenEnableStatus: %X \n",screenEnableStatus);
+             }
++        
++            num ++;
+         }
+-    }
+ 
+-    if (true == firstScreenIsEnable && false == secondScreenIsEnable) {
+-        USD_LOG(LOG_DEBUG,"mode : firstScreenMode");
+-        return UsdBaseClass::eScreenMode::firstScreenMode;
+     }
+ 
+-    if (false == firstScreenIsEnable && true == secondScreenIsEnable) {
+-        USD_LOG(LOG_DEBUG,"mode : secondScreenMode");
+-        return UsdBaseClass::eScreenMode::secondScreenMode;
++    if(screenEnableStatus  == OnlyFirstScreen) {
++        USD_LOG(LOG_DEBUG,"mode : firstScreenMode\n");
++        return UsdBaseClass::eScreenMode::firstScreenMode;    
++    }
++    if( screenEnableStatus && (OnlyFirstScreen << 7 != (screenEnableStatus << 7) % 256)) {
++        USD_LOG(LOG_DEBUG,"mode : otherScreenMode");
++        return UsdBaseClass::eScreenMode::secondScreenMode;    
+     }
+ 
+-    if (firstScreenQPoint == secondScreenQPoint && firstScreenQsize==secondScreenQsize) {
++    if (isGeneralClone) {
+         USD_LOG(LOG_DEBUG,"mode : cloneScreenMode");
+         return UsdBaseClass::eScreenMode::cloneScreenMode;
+     }
+ 
++  
+     USD_LOG(LOG_DEBUG,"mode : extendScreenMode");
+     return UsdBaseClass::eScreenMode::extendScreenMode;
+ }
+diff --git a/plugins/xrandr/xrandr-manager.h b/plugins/xrandr/xrandr-manager.h
+index af2f5db..b2b5656 100644
+--- a/plugins/xrandr/xrandr-manager.h
++++ b/plugins/xrandr/xrandr-manager.h
+@@ -33,7 +33,7 @@
+ #include <QDBusInterface>
+ #include <QGSettings/qgsettings.h>
+ #include <QScreen>
+-
++#include <QVariantMap>
+ 
+ #include <KF5/KScreen/kscreen/config.h>
+ #include <KF5/KScreen/kscreen/log.h>
+@@ -110,8 +110,13 @@ public:
+     bool readMateToKscreen(char monitorsCount,QMap<QString, QString> &monitorsName);
+     int getMateConfigParam(UsdOuputProperty *mateOutput, QString param);
+ 
++    void setOutputEnable(QString outputName,bool isEnabled);
++    bool getOutputEnable(QString outputName);
++
+     UsdBaseClass::eScreenMode discernScreenMode();
+ public Q_SLOTS:
++
++    void configChangedSlot(QVariantMap config);
+     void doTabletModeChanged(const bool tablemode);
+     void doOutputsConfigurationChanged();
+     void doRotationChanged(const QString &rotation);
+@@ -176,6 +181,8 @@ private:
+     bool    m_applyConfigWhenSave = false;
+     int     m_waylandMode = 0;
+     bool    m_isInitFinish = false;
++    bool    isApplied = false;
++    bool    isDefaultStatus = false;
+ };
+ 
+ #endif // XRANDRMANAGER_H

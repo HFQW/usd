@@ -1,0 +1,39 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Tue, 20 Jun 2023 14:47:50 +0800
+Subject: =?utf-8?b?56yU6K6w5pys5omp5bGV5qih5byP6Kem5pG45bGP5pig5bCE6ZSZ6K+v?=
+
+---
+ common/touch-calibrate.cpp | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/common/touch-calibrate.cpp b/common/touch-calibrate.cpp
+index d11bdff..87e3ec0 100644
+--- a/common/touch-calibrate.cpp
++++ b/common/touch-calibrate.cpp
+@@ -275,7 +275,9 @@ void TouchCalibrate::calibrateTouchScreen()
+         }
+         ++it_tc;
+     }
++
+     //通过配置文件，尺寸比较后，仍然无法映射所有触摸设备与屏幕，则对剩下的设备进行随机映射
++    //这里让一个touch设备去映射了多个screen设备 -> 按理应该是:一个screen设备被一个touch设备所映射
+     it_tc = m_touchScreenMap.begin();
+     while (it_tc != m_touchScreenMap.end()) {
+         if (it_tc.value()->isMapped) {
+@@ -288,9 +290,15 @@ void TouchCalibrate::calibrateTouchScreen()
+                 ++it_sc;
+                 continue;
+             }
++	    //随机映射时，不进行映射到内屏
++	    if(it_sc.value()->name.contains("eDP",Qt::CaseInsensitive) )
++	    {
++		++it_sc;
++		continue;
++	    }
+             //此处不再比较触摸设备与屏幕大小，为映射过的设备和屏幕进行随机映射
+             calibrateDevice(it_tc.value()->id, it_sc.value()->name);
+-            ++it_sc;
++	    ++it_sc;
+         }
+         ++it_tc;
+     }

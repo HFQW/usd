@@ -1,0 +1,92 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Mon, 3 Jul 2023 10:18:32 +0800
+Subject: update changelog and delete some log
+
+---
+ plugins/xrandr/xrandr-manager.cpp | 24 +++++++++++++++---------
+ 1 file changed, 15 insertions(+), 9 deletions(-)
+
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index f22f1f1..cb5e58b 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -1501,23 +1501,25 @@ void XrandrManager::setOutputsModeToClone(bool needReadFormConfig)
+                         primarySize = primaryMode->size();
+                         primaryRefreshRate = primaryMode->refreshRate();
+                         primaryOutput->setCurrentModeId(primaryMode->id());
++                    
+                         secondaryRefreshRate = newOutputMode->refreshRate();
+                         output->setCurrentModeId(newOutputMode->id());
+ 
+                     } else if (bigestResolution ==  primaryMode->size().width() * primaryMode->size().height()) {
+-                        if (primaryRefreshRate < primaryMode->refreshRate() &&
+-                                primaryOutput->currentModeId() != primaryOutput->preferredModeId()) {
+-
++                        // USD_LOG(LOG_DEBUG,"相同分辨率下,preferredModeId:[%s],modeID:[%s],",primaryOutput->preferredModeId().toLatin1().data(),newOutputMode->id().toLatin1().data());
++                     
++                        if (primaryRefreshRate < primaryMode->refreshRate()) {
+                             primaryRefreshRate = primaryMode->refreshRate();
+                             primaryOutput->setCurrentModeId(primaryMode->id());
+                         }
+ 
+-                        if (secondaryRefreshRate < newOutputMode->refreshRate() &&
+-                                output->currentModeId() != output->preferredModeId()) {
+-
++                        if (secondaryRefreshRate < newOutputMode->refreshRate()) {
+                             secondaryRefreshRate = newOutputMode->refreshRate();
+                             output->setCurrentModeId(newOutputMode->id());
++                            USD_LOG(LOG_DEBUG," Clone: set mode:[%s]",newOutputMode->id().toLatin1().data());
+                         }
++
++                        // USD_LOG_SHOW_OUTPUT(output);
+                     }
+                 }
+             }
+@@ -1650,7 +1652,7 @@ bool XrandrManager::getOutputEnable(QString outputName)
+ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+ {
+     int posX = 0;
+-    int maxScreenSize = 0;
++    // int maxScreenSize = 0;
+     bool hadFindFirstScreen = false;
+     bool hadSetPrimary = false;
+     float refreshRate = 0.0;
+@@ -1693,6 +1695,8 @@ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+ 
+             int maxWidth = 0;
+             int maxHeight = 0;
++            int maxScreenSize = 0;
++
+             Q_FOREACH(auto Mode, output->modes()){
+ 
+                 if (Mode->size().width()*Mode->size().height() < maxScreenSize) {
+@@ -1701,7 +1705,7 @@ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+                     if (refreshRate < Mode->refreshRate()) {
+                         refreshRate = Mode->refreshRate();
+                         output->setCurrentModeId(Mode->id());
+-                        USD_LOG(LOG_DEBUG,"use mode :%s %f",Mode->id().toLatin1().data(), Mode->refreshRate());
++                        USD_LOG(LOG_DEBUG,"compare refreshRate and then use mode :%s %f",Mode->id().toLatin1().data(), Mode->refreshRate());
+                     }
+                     continue;
+                 }
+@@ -1712,10 +1716,11 @@ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+                 maxScreenSize = maxWidth * maxHeight;
+                 output->setCurrentModeId(Mode->id());
+                 USD_LOG_SHOW_PARAM1(maxScreenSize);
++                USD_LOG(LOG_DEBUG,"compare size and then use mode :%s %f,size(%d,%d)",Mode->id().toLatin1().data(), refreshRate,maxWidth,maxHeight);
+             }
+             output->setPos(QPoint(posX,0));
+             posX+= maxWidth;
+-            USD_LOG(LOG_DEBUG,"screen-width:%d , posX = %d",output->size().width(),posX);
++            USD_LOG(LOG_DEBUG,"maxWidthByMode:%d , screenWidthByOutput:%d , posX = %d",maxWidth,output->size().width(),posX);
+         }
+         USD_LOG_SHOW_OUTPUT(output);
+     }
+@@ -1825,6 +1830,7 @@ void XrandrManager::setOutputsModeToExtend()
+         }
+         output->setPos(QPoint(primaryX,0));
+         primaryX += singleMaxWidth;
++        USD_LOG(LOG_DEBUG,"Extend: singleMaxWidth:%d, posX", singleMaxWidth,primaryX);
+         USD_LOG_SHOW_OUTPUT(output);
+     }
+     applyConfig();

@@ -1,0 +1,365 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Tue, 27 Jun 2023 14:53:20 +0800
+Subject: =?utf-8?b?5aSa5bGP5pi+56S65qih5byP6K6+572u5LyY5YyW?=
+
+---
+ plugins/xrandr/xrandr-manager.cpp | 262 +++++++++++++++++++++++---------------
+ plugins/xrandr/xrandr-manager.h   |   1 +
+ 2 files changed, 160 insertions(+), 103 deletions(-)
+
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index faab4f9..f22f1f1 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -1484,6 +1484,8 @@ void XrandrManager::setOutputsModeToClone(bool needReadFormConfig)
+         }
+         output->setPos(QPoint(0,0));
+ 
++        secondaryRefreshRate = 0;
++
+         secondScreen = output->name().toLatin1().data();
+         //遍历模式找出最大分辨率的克隆模式
+         Q_FOREACH(auto primaryMode, primaryOutput->modes()) {
+@@ -1491,9 +1493,11 @@ void XrandrManager::setOutputsModeToClone(bool needReadFormConfig)
+                 primaryOutput->setPos(QPoint(0,0));
+                 bigestResolution = primarySize.width()*primarySize.height();
+ 
++
+                 if (primaryMode->size() == newOutputMode->size()) {
+-                    if (bigestResolution < primaryMode->size().width() * primaryMode->size().height()) {
+ 
++                    if (bigestResolution < primaryMode->size().width() * primaryMode->size().height()) {
++                        
+                         primarySize = primaryMode->size();
+                         primaryRefreshRate = primaryMode->refreshRate();
+                         primaryOutput->setCurrentModeId(primaryMode->id());
+@@ -1501,7 +1505,6 @@ void XrandrManager::setOutputsModeToClone(bool needReadFormConfig)
+                         output->setCurrentModeId(newOutputMode->id());
+ 
+                     } else if (bigestResolution ==  primaryMode->size().width() * primaryMode->size().height()) {
+-
+                         if (primaryRefreshRate < primaryMode->refreshRate() &&
+                                 primaryOutput->currentModeId() != primaryOutput->preferredModeId()) {
+ 
+@@ -1647,9 +1650,11 @@ bool XrandrManager::getOutputEnable(QString outputName)
+ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+ {
+     int posX = 0;
++    int maxScreenSize = 0;
+     bool hadFindFirstScreen = false;
+     bool hadSetPrimary = false;
+-    bool hadOpenOneOutput = false;
++    float refreshRate = 0.0;
++
+     if (false == checkPrimaryOutputsIsSetable()) {
+         //return; //因为有用户需要在只有一个屏幕的情况下进行了打开，所以必须走如下流程。
+     }
+@@ -1662,73 +1667,59 @@ void XrandrManager::setOutputsModeToFirst(bool isFirstMode)
+             return;
+         }
+     }
+-    if (isFirstMode) {
+-        Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+-            if (output->isConnected()) {
+-                output->setEnabled(true);
+-            } else {
+-                output->setEnabled(false);
+-                continue;
+-            }
+-            //找到第一个屏幕（默认为内屏）
+-            if (hadFindFirstScreen) {
+-                output->setEnabled(false);
+-            } else {
+-                hadFindFirstScreen = true;
+-                output->setEnabled(true);
+-            }
+-            if (output->isEnabled()) {
+-                hadOpenOneOutput = true;
+-            }
+ 
+-            if (output->isEnabled()) {
+-                if(hadSetPrimary) {
+-                    output->setPrimary(false);
+-                } else {
+-                    hadSetPrimary = true;
+-                    output->setPrimary(true);
+-                }
+-                output->setCurrentModeId(output->preferredModeId());
+-                output->setPos(QPoint(posX,0));
+-                posX+=output->size().width();
+-            }
+-            USD_LOG_SHOW_OUTPUT(output);
++     Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
++        if (output->isConnected()) {
++            output->setEnabled(true);
++        } else {
++            output->setEnabled(false);
++            continue;
+         }
+-    } else {
+-        Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+-            if (output->isConnected()) {
+-                output->setEnabled(true);
+-            } else {
+-                output->setEnabled(false);
+-                continue;
+-            }
+-            //找到第一个屏幕（默认为内屏）
+-            if (hadFindFirstScreen) {
+-                if (hadOpenOneOutput) {
+-                    output->setEnabled(false);
+-                } else {
+-                    output->setEnabled(true);//打开禁用后的第一个屏幕
+-                    hadOpenOneOutput = true;
+-                }
++        //找到第一个屏幕（默认为内屏）
++        if (hadFindFirstScreen) {
++            output->setEnabled(!isFirstMode);
++        } else {
++            hadFindFirstScreen = true;
++            output->setEnabled(isFirstMode);
++        }
++
++        if (output->isEnabled()) {
++            if(hadSetPrimary) {
++                output->setPrimary(false);
+             } else {
+-                hadFindFirstScreen = true;
+-                output->setEnabled(false);
++                hadSetPrimary = true;
++                output->setPrimary(true);
+             }
+ 
+-            if (output->isEnabled()) {
+-                if(hadSetPrimary) {
+-                    output->setPrimary(false);
+-                } else {
+-                    hadSetPrimary = true;
+-                    output->setPrimary(true);
++            int maxWidth = 0;
++            int maxHeight = 0;
++            Q_FOREACH(auto Mode, output->modes()){
++
++                if (Mode->size().width()*Mode->size().height() < maxScreenSize) {
++                    continue;
++                } else if (Mode->size().width()*Mode->size().height() == maxScreenSize) {
++                    if (refreshRate < Mode->refreshRate()) {
++                        refreshRate = Mode->refreshRate();
++                        output->setCurrentModeId(Mode->id());
++                        USD_LOG(LOG_DEBUG,"use mode :%s %f",Mode->id().toLatin1().data(), Mode->refreshRate());
++                    }
++                    continue;
+                 }
+-                output->setCurrentModeId(output->preferredModeId());
+-                output->setPos(QPoint(posX,0));
+-                posX+=output->size().width();
++
++                refreshRate = Mode->refreshRate();
++                maxWidth = Mode->size().width();
++                maxHeight = Mode->size().height();
++                maxScreenSize = maxWidth * maxHeight;
++                output->setCurrentModeId(Mode->id());
++                USD_LOG_SHOW_PARAM1(maxScreenSize);
+             }
+-            USD_LOG_SHOW_OUTPUT(output);
++            output->setPos(QPoint(posX,0));
++            posX+= maxWidth;
++            USD_LOG(LOG_DEBUG,"screen-width:%d , posX = %d",output->size().width(),posX);
+         }
++        USD_LOG_SHOW_OUTPUT(output);
+     }
++
+     applyConfig();
+ }
+ 
+@@ -1739,7 +1730,6 @@ void XrandrManager::setOutputsModeToExtend()
+     int singleMaxWidth = 0;
+     float refreshRate = 0.0;
+     bool hadFindPrimay = false;
+-    int connectedScreens;
+ 
+     if (false == checkPrimaryOutputsIsSetable()) {
+         return;
+@@ -1751,56 +1741,44 @@ void XrandrManager::setOutputsModeToExtend()
+         }
+     }
+ 
++
+     Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+         if (!output->isConnected()){
+             continue;
+         }
+-        connectedScreens++;
+-    }
+-
+-
+-    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+-
+-            if (!output->isConnected()){
+-                continue;
+-            }
+-            if (hadFindPrimay) {
+-                output->setPrimary(false);
+-                continue;
+-            }
+-            if (!output->name().contains("eDP-1")) {//考虑   pnZXECRB项目中内屏为 DisplayPort-0
+-                output->setPrimary(false);
++        if (hadFindPrimay) {
++            output->setPrimary(false);
++            continue;
++        }
++        if (!output->name().contains("eDP")) {//考虑   pnZXECRB项目中内屏为 DisplayPort-0
++            output->setPrimary(false);
++            continue;
++        }
++        hadFindPrimay = true;
++        output->setPrimary(true);
++        output->setEnabled(true);
++        output->setRotation(static_cast<KScreen::Output::Rotation>(1));
++        screenSize = 0;
++        refreshRate = 0.0;
++        Q_FOREACH(auto Mode, output->modes()) {
++            if (Mode->size().width()*Mode->size().height() < screenSize){
+                 continue;
+-            }
+-
+-            hadFindPrimay = true;
+-            output->setPrimary(true);
+-            output->setEnabled(true);
+-            output->setRotation(static_cast<KScreen::Output::Rotation>(1));
+-            screenSize = 0;
+-            refreshRate = 0.0;
+-
+-            Q_FOREACH(auto Mode, output->modes()) {
+-                if (Mode->size().width()*Mode->size().height() < screenSize){
++            } else if (Mode->size().width()*Mode->size().height() == screenSize) {
++                if (Mode->refreshRate() <= refreshRate) {
+                     continue;
+-                } else if (Mode->size().width()*Mode->size().height() == screenSize) {
+-                    if (Mode->refreshRate() <= refreshRate) {
+-                        continue;
+-                    }
+-                }
+-
+-                refreshRate = Mode->refreshRate();
+-                screenSize = Mode->size().width()*Mode->size().height();
+-                output->setCurrentModeId(Mode->id());
+-                if (Mode->size().width() > singleMaxWidth) {
+-                    singleMaxWidth = Mode->size().width();
+                 }
+             }
+-
+-            output->setPos(QPoint(0,0));
+-            primaryX += singleMaxWidth;
+-            USD_LOG_SHOW_OUTPUT(output);
++            refreshRate = Mode->refreshRate();
++            screenSize = Mode->size().width()*Mode->size().height();
++            output->setCurrentModeId(Mode->id());
++            if (Mode->size().width() > singleMaxWidth) {
++                singleMaxWidth = Mode->size().width();
++            }
+         }
++        output->setPos(QPoint(0,0));
++        primaryX += singleMaxWidth;
++        USD_LOG_SHOW_OUTPUT(output);
++    }
+ 
+     Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+         screenSize = 0;
+@@ -1852,6 +1830,84 @@ void XrandrManager::setOutputsModeToExtend()
+     applyConfig();
+ }
+ 
++//该方法会在某些显卡上产生错误
++void XrandrManager::setOutputsModeToExtendWithPreferredMode()
++{
++    int primaryX = 0;
++    int screenSize = 0;
++    int singleMaxWidth = 0;
++    float refreshRate = 0.0;
++    bool hadFindPrimay = false;
++    int connectedScreens;
++
++    if (false == checkPrimaryOutputsIsSetable()) {
++        return;
++    }
++
++    if (readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode::extendScreenMode)) {
++        return;
++    }
++
++    //先找eDP，
++    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
++
++        if (!output->isConnected()){
++            continue;
++        }
++        if (hadFindPrimay) {
++            output->setPrimary(false);
++            continue;
++        }
++        if (!output->name().contains("eDP")) {//考虑   pnZXECRB项目中内屏为 DisplayPort-0
++            output->setPrimary(false);
++            continue;
++        }
++
++        hadFindPrimay = true;
++        output->setPrimary(true);
++        output->setEnabled(true);
++        output->setRotation(static_cast<KScreen::Output::Rotation>(1));
++        if (UsdBaseClass::isTablet()) {
++            output->setRotation(static_cast<KScreen::Output::Rotation>(getCurrentRotation()));
++        }
++        output->setCurrentModeId(output->preferredModeId());
++        singleMaxWidth = output->preferredMode()->size().width();
++        output->setPos(QPoint(0,0));
++        primaryX += singleMaxWidth;
++        USD_LOG_SHOW_OUTPUT(output);
++    }
++
++    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
++
++        if (!output->isConnected()){
++            continue;
++        }
++
++        if (!hadFindPrimay) {
++            output->setPrimary(true);
++            hadFindPrimay = true;
++        } else {
++            if (output->isPrimary()){
++                continue;
++            }
++        }
++
++        output->setEnabled(true);
++        output->setRotation(static_cast<KScreen::Output::Rotation>(1));
++        if (UsdBaseClass::isTablet()) {
++            output->setRotation(static_cast<KScreen::Output::Rotation>(getCurrentRotation()));
++        }
++        output->setCurrentModeId(output->preferredModeId());
++        singleMaxWidth = output->preferredMode()->size().width();
++        output->setPos(QPoint(primaryX,0));
++        primaryX += singleMaxWidth;
++        USD_LOG_SHOW_OUTPUT(output);
++    }
++    applyConfig();
++}
++
++
++
+ void XrandrManager::setOutputsParam(QString screensParam)
+ {
+     USD_LOG(LOG_DEBUG,"param:%s", screensParam.toLatin1().data());
+diff --git a/plugins/xrandr/xrandr-manager.h b/plugins/xrandr/xrandr-manager.h
+index 8960800..989204d 100644
+--- a/plugins/xrandr/xrandr-manager.h
++++ b/plugins/xrandr/xrandr-manager.h
+@@ -78,6 +78,7 @@ public:
+     void setOutputsModeToClone(bool needReadFormConfig = true);
+     void setOutputsModeToFirst(bool isFirstMode);
+     void setOutputsModeToExtend();
++    void setOutputsModeToExtendWithPreferredMode();
+     bool checkPrimaryOutputsIsSetable();
+     bool readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode eMode);
+     bool checkSettable(UsdBaseClass::eScreenMode eMode);

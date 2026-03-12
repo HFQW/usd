@@ -1,0 +1,28 @@
+From: liting <liting1@kylinos.cn>
+Date: Tue, 20 Jun 2023 17:01:40 +0800
+Subject: =?utf-8?b?6Kej5Yaz5ZCI5bm25Yay56qB77yM5L+u5pS5Y2hhbmdlbG9n?=
+
+---
+ plugins/kds/widget.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/plugins/kds/widget.cpp b/plugins/kds/widget.cpp
+index 297c583..3fd9555 100644
+--- a/plugins/kds/widget.cpp
++++ b/plugins/kds/widget.cpp
+@@ -110,13 +110,13 @@ void Widget::beginSetup()
+ 
+     connect(QApplication::primaryScreen(), &QScreen::geometryChanged, this, &Widget::geometryChangedHandle);
+ 
+-    connect(XEventMonitor::instance(), SIGNAL(buttonPress(int,int)),this, SLOT(XkbButtonEvent(int,int)));
++    //connect(XEventMonitor::instance(), SIGNAL(buttonPress(int,int)),this, SLOT(XkbButtonEvent(int,int)));
+     connect(KWindowSystem::self(), &KWindowSystem::activeWindowChanged, this,[&](WId activeWindowId) {
+         if (activeWindowId != this->winId()) {
+             close();
+         }
+     });
+-    XEventMonitor::instance()->start();
++    //XEventMonitor::instance()->start();
+ }
+ 
+ void Widget::initData()

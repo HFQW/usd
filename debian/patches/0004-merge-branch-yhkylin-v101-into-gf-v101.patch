@@ -1,0 +1,5171 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Thu, 27 Apr 2023 13:38:00 +0800
+Subject: merge branch 'yhkylin/v101' into gf/v101'
+
+---
+ common/common.pri                                  |   3 +-
+ common/plugin-manager-interface.h                  |  17 +
+ common/usd_global_define.h                         |   9 +
+ daemon/res/i18n/ukui-settings-daemon_bo_CN.ts      |   8 +-
+ daemon/res/i18n/ukui-settings-daemon_zh_CN.ts      |  20 +-
+ data/color.ukui-settings-plugin                    |   9 -
+ ...g.ukui.SettingsDaemon.plugins.color.gschema.xml | 110 ----
+ ...i.SettingsDaemon.plugins.media-keys.gschema.xml |   6 +-
+ plugins/gamma-manager/color.pro                    |  78 +++
+ plugins/gamma-manager/color.ukui-settings-plugin   |   9 +
+ plugins/gamma-manager/gamma-color-info.h           |  45 ++
+ plugins/gamma-manager/gamma-manager-adaptor.cpp    |  83 +++
+ plugins/gamma-manager/gamma-manager-adaptor.h      | 134 +++++
+ plugins/gamma-manager/gamma-manager-dbus.cpp       |  86 +++
+ plugins/gamma-manager/gamma-manager-dbus.h         |  86 +++
+ plugins/gamma-manager/gamma-manager-define.h       |  79 +++
+ plugins/gamma-manager/gamma-manager-gtkconfig.cpp  | 176 ++++++
+ plugins/gamma-manager/gamma-manager-gtkconfig.h    |  61 ++
+ plugins/gamma-manager/gamma-manager-helper.cpp     | 575 +++++++++++++++++++
+ plugins/gamma-manager/gamma-manager-helper.h       | 202 +++++++
+ plugins/gamma-manager/gamma-manager-location.cpp   | 201 +++++++
+ plugins/gamma-manager/gamma-manager-location.h     | 106 ++++
+ plugins/gamma-manager/gamma-manager-plugin.cpp     |  64 +++
+ plugins/gamma-manager/gamma-manager-plugin.h       |  44 ++
+ plugins/gamma-manager/gamma-manager-thread.cpp     | 185 ++++++
+ plugins/gamma-manager/gamma-manager-thread.h       | 110 ++++
+ plugins/gamma-manager/gamma-manager-wayland.cpp    | 343 +++++++++++
+ plugins/gamma-manager/gamma-manager-wayland.h      | 102 ++++
+ plugins/gamma-manager/gamma-manager.cpp            | 624 +++++++++++++++++++++
+ plugins/gamma-manager/gamma-manager.h              | 184 ++++++
+ ...g.ukui.SettingsDaemon.plugins.color.gschema.xml | 110 ++++
+ plugins/gamma-manager/pingpongtest.cpp             | 128 +++++
+ plugins/gamma-manager/pingpongtest.h               |  91 +++
+ plugins/gamma-manager/rgb-gamma-table.h            | 248 ++++++++
+ plugins/housekeeping/usd-disk-space.cpp            |   1 +
+ plugins/housekeeping/usd-ldsm-dialog.cpp           |  67 +--
+ plugins/housekeeping/usd-ldsm-dialog.h             |   4 +-
+ plugins/media-keys/mediakey-manager.cpp            | 120 ++--
+ plugins/media-keys/mediakey-manager.h              |   2 +-
+ ukui-settings-daemon.pro                           |   2 +-
+ 40 files changed, 4273 insertions(+), 259 deletions(-)
+ create mode 100644 common/plugin-manager-interface.h
+ delete mode 100644 data/color.ukui-settings-plugin
+ delete mode 100644 data/org.ukui.SettingsDaemon.plugins.color.gschema.xml
+ create mode 100644 plugins/gamma-manager/color.pro
+ create mode 100644 plugins/gamma-manager/color.ukui-settings-plugin
+ create mode 100644 plugins/gamma-manager/gamma-color-info.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-adaptor.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-adaptor.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-dbus.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-dbus.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-define.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-gtkconfig.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-gtkconfig.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-helper.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-helper.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-location.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-location.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-plugin.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-plugin.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-thread.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-thread.h
+ create mode 100644 plugins/gamma-manager/gamma-manager-wayland.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager-wayland.h
+ create mode 100644 plugins/gamma-manager/gamma-manager.cpp
+ create mode 100644 plugins/gamma-manager/gamma-manager.h
+ create mode 100644 plugins/gamma-manager/org.ukui.SettingsDaemon.plugins.color.gschema.xml
+ create mode 100644 plugins/gamma-manager/pingpongtest.cpp
+ create mode 100644 plugins/gamma-manager/pingpongtest.h
+ create mode 100644 plugins/gamma-manager/rgb-gamma-table.h
+
+diff --git a/common/common.pri b/common/common.pri
+index 3418c2d..3c720eb 100644
+--- a/common/common.pri
++++ b/common/common.pri
+@@ -36,7 +36,8 @@ HEADERS += \
+         $$PWD/ukui-input-helper.h       \
+         $$PWD/ukui-keygrab.h            \
+         $$PWD/config.h \
+-        $$PWD/xrandroutput.h
++        $$PWD/xrandroutput.h    \
++        $$PWD/plugin-manager-interface.h
+ 
+ RESOURCES += \
+     $$PWD/ukui_icon.qrc
+diff --git a/common/plugin-manager-interface.h b/common/plugin-manager-interface.h
+new file mode 100644
+index 0000000..1dd3f41
+--- /dev/null
++++ b/common/plugin-manager-interface.h
+@@ -0,0 +1,17 @@
++#ifndef BASEMANAGER_H
++#define BASEMANAGER_H
++#include <QObject>
++namespace UkuiSettingsDaemon {
++class ManagerInterface;
++}
++
++class ManagerInterface: public QObject
++{
++    Q_OBJECT
++public:
++    virtual ~ManagerInterface() {}
++
++    virtual bool Start () = 0;
++    virtual void Stop () = 0;
++};
++#endif // BASEMANAGER_H
+diff --git a/common/usd_global_define.h b/common/usd_global_define.h
+index 94ff8ee..898f252 100644
+--- a/common/usd_global_define.h
++++ b/common/usd_global_define.h
+@@ -57,6 +57,15 @@
+ #define GNOME_SESSION_MANAGER               "org.gnome.SessionManager.Presence"
+ #define SESSION_MANAGER_PATH                "/org/gnome/SessionManager/Presence"
+ 
++/*org.ukui.SettingsDaemon.gammaManager*/
++#define DBUS_GM_NAME                    "org.ukui.SettingsDaemon"
++#define DBUS_GM_PATH                    "/org/ukui/SettingsDaemon/GammaManager"
++#define DBUS_GM_INTERFACE               "org.ukui.SettingsDaemon.GammaManager"
++/*****/
++
++
++#define MIN_GAMMA_BRIGHTNESS    0.35
++#define MAX_GAMMA_BRIGHTNESS    0.65
+ //gsettings
+ 
+ /*com.kylin.statusmanager.interface*/
+diff --git a/daemon/res/i18n/ukui-settings-daemon_bo_CN.ts b/daemon/res/i18n/ukui-settings-daemon_bo_CN.ts
+index 4f7daa5..2204824 100644
+--- a/daemon/res/i18n/ukui-settings-daemon_bo_CN.ts
++++ b/daemon/res/i18n/ukui-settings-daemon_bo_CN.ts
+@@ -168,7 +168,7 @@
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="120"/>
+-        <source>Ignore</source>
++        <source>Confirm</source>
+         <translation>སྣང་མེད་དུ་བཞག་</translation>
+     </message>
+     <message>
+@@ -183,8 +183,8 @@
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="142"/>
+-        <source>The volume &quot;%1&quot; has only %s disk space remaining.</source>
+-        <translation>&quot;%1&quot;ཡི་བོངས་ཚད་ལ་%s ཁབ་ལེན་གྱི་བར་སྟོང་མ་གཏོགས་ལྷག་མེད།</translation>
++        <source>The remaining space of drive &quot;%1&quot; is less than %2, clear the garbage or move the data to another disk in time.</source>
++        <translation>&quot;%1&quot;ཡི་བོངས་ཚད་ལ་%2 ཁབ་ལེན་གྱི་བར་སྟོང་མ་གཏོགས་ལྷག་མེད།,ཁྱོད་ཀྱིས་མ་སྤྱོད་པའི་གོ་རིམ་དང་ཡིག་ཆ་མེད་པར་བཟོ་བའམ་ཡང་ན་ཡིག་ཆ་དེ་ཁབ་ལེན་ཁབ་ལེན་དང་བར་ཐག་གཞན་ཞིག་ཏུ་སྤོས་ནས་ཁབ་ལེན་གྱི་བར་སྟོང་མེད་པར་བཟོ་ཐུབ</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="145"/>
+@@ -213,7 +213,7 @@
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="172"/>
+-        <source>Don&apos;t show any warnings again for this file system</source>
++        <source>Messages that no longer remind this disk</source>
+         <translation>ཡིག་ཚགས་མ་ལག་འདི་ལ་སླར་ཡང་ཐ་ཚིག་བསྒྲགས་མི་དགོས།</translation>
+     </message>
+     <message>
+diff --git a/daemon/res/i18n/ukui-settings-daemon_zh_CN.ts b/daemon/res/i18n/ukui-settings-daemon_zh_CN.ts
+index 1421345..ade0e6c 100644
+--- a/daemon/res/i18n/ukui-settings-daemon_zh_CN.ts
++++ b/daemon/res/i18n/ukui-settings-daemon_zh_CN.ts
+@@ -164,17 +164,17 @@
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="92"/>
+         <source>Low Disk Space</source>
+-        <translation>磁盘空间小</translation>
++        <translation>磁盘空间不足提醒</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="120"/>
+-        <source>Ignore</source>
+-        <translation>忽视</translation>
++        <source>Confirm</source>
++        <translation>确认</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="125"/>
+         <source>Empty Trash</source>
+-        <translation>清空回收站</translation>
++        <translation>清理回收站</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="129"/>
+@@ -183,8 +183,8 @@
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="142"/>
+-        <source>The volume &quot;%1&quot; has only %s disk space remaining.</source>
+-        <translation>卷 &quot;%1&quot; 仅剩余 %s 硬盘空间。</translation>
++        <source>The remaining space of drive &quot;%1&quot; is less than %2, clear the garbage or move the data to another disk in time.</source>
++        <translation>&quot;%1&quot; 盘剩余空间不足 %2，请及时清理垃圾或将数据移至其他磁盘。</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="145"/>
+@@ -213,8 +213,8 @@
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="172"/>
+-        <source>Don&apos;t show any warnings again for this file system</source>
+-        <translation>不再为此文件系统显示任何警告</translation>
++        <source>Messages that no longer remind this disk</source>
++        <translation>不再提醒此磁盘的消息</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/usd-ldsm-dialog.cpp" line="174"/>
+@@ -232,7 +232,7 @@
+     <message>
+         <location filename="../../../plugins/housekeeping/ldsm-trash-empty.cpp" line="60"/>
+         <source>Emptying the trash</source>
+-        <translation>清空回收站</translation>
++        <translation>清理回收站</translation>
+     </message>
+     <message>
+         <location filename="../../../plugins/housekeeping/ldsm-trash-empty.cpp" line="76"/>
+@@ -252,7 +252,7 @@
+     <message>
+         <location filename="../../../plugins/housekeeping/ldsm-trash-empty.cpp" line="85"/>
+         <source>Empty Trash</source>
+-        <translation>清空回收站</translation>
++        <translation>清理回收站</translation>
+     </message>
+ </context>
+ <context>
+diff --git a/data/color.ukui-settings-plugin b/data/color.ukui-settings-plugin
+deleted file mode 100644
+index 3bb6567..0000000
+--- a/data/color.ukui-settings-plugin
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[UKUI Settings Plugin]
+-Module=color
+-IAge=0
+-Name=Color
+-Name[zh_CN]=色温调整
+-Description=Color plugin
+-Authors=Shang Xiaoyang
+-Copyright=Copyright (C) 2020 KylinSoft Co., Ltd.
+-Website=
+diff --git a/data/org.ukui.SettingsDaemon.plugins.color.gschema.xml b/data/org.ukui.SettingsDaemon.plugins.color.gschema.xml
+deleted file mode 100644
+index 9a7a4f4..0000000
+--- a/data/org.ukui.SettingsDaemon.plugins.color.gschema.xml
++++ /dev/null
+@@ -1,110 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<schemalist>
+-  <schema gettext-domain="ukui-settings-daemon" id="org.ukui.SettingsDaemon.plugins.color" path="/org/ukui/settings-daemon/plugins/color/">
+-    <key name="active" type="b">
+-      <default>true</default>
+-      <summary>Activation of this plugin</summary>
+-      <description>Whether this plugin would be activated by unity-settings-daemon or not</description>
+-    </key>
+-    <key name="priority" type="i">
+-      <default>16</default>
+-      <summary>Priority to use for this plugin</summary>
+-      <description>Priority to use for this plugin in unity-settings-daemon startup queue</description>
+-    </key>
+-    <key name="night-light-enabled" type="b">
+-      <default>false</default>
+-      <summary>If the night light mode is enabled</summary>
+-      <description>Night light mode changes the color temperature of your display when the sun has gone down or at preset times.</description>
+-    </key>
+-    <key name="night-light-temperature" type="u">
+-      <default>4000</default>
+-      <summary>Temperature of the display when enabled</summary>
+-      <description>This temperature in Kelvin is used to modify the screen tones when night light mode is enabled. Higher values are bluer, lower redder.</description>
+-    </key>
+-    <key name="real-time-temperature" type="u">
+-      <default>4000</default>
+-      <summary>Temperature of real time</summary>
+-      <description>Temperature of real time</description>
+-    </key>
+-    <key name="night-light-schedule-automatic" type="b">
+-      <default>true</default>
+-      <summary>Use the sunrise and sunset</summary>
+-      <description>Calculate the sunrise and sunset times automatically, from the current location.</description>
+-    </key>
+-    <key name="night-light-schedule-from" type="d">
+-      <default>20.00</default>
+-      <summary>The start time</summary>
+-      <description>When “night-light-schedule-automatic” is disabled, use this start time in hours from midnight.</description>
+-    </key>
+-    <key name="night-light-schedule-to" type="d">
+-      <default>6.00</default>
+-      <summary>The end time</summary>
+-      <description>When “night-light-schedule-automatic” is disabled, use this end time in hours from midnight.</description>
+-    </key>
+-    <key name="night-light-last-coordinates" type="(dd)">
+-      <default>(91,181)</default>
+-      <summary>The last detected position</summary>
+-      <description>When location services are available this represents the last detected location. The default value is an invalid value to ensure it is always updated at startup.</description>
+-    </key>
+-    <key name="night-light-allday" type="b">
+-      <default>false</default>
+-      <summary>Open night light all day</summary>
+-      <description>(intel)At any time, night mode is open.</description>
+-    </key>
+-    <key name="theme-schedule-automatic" type="b">
+-      <default>false</default>
+-      <summary>Use the sunrise and sunset to set theme</summary>
+-      <description>(intel)Calculate the sunrise and sunset times, and set the theme automatically.</description>
+-    </key>
+-    <key name="night-light-schedule-automatic-from" type="d">
+-      <default>0.00</default>
+-      <summary>The start time</summary>
+-      <description>(intel)When “night-light-schedule-automatic” is enabled, calculate this start time in hours from midnight.</description>
+-    </key>
+-    <key name="night-light-schedule-automatic-to" type="d">
+-      <default>0.00</default>
+-      <summary>The end time</summary>
+-      <description>(intel)When “night-light-schedule-automatic” is enabled, calculate this end time in hours from midnight.</description>
+-    </key>
+-    <key name="had-read-kwin-config" type="b">
+-      <default>false</default>
+-      <summary>Use the read kwin config</summary>
+-      <description>.</description>
+-    </key>
+-    <key name="dark-mode" type="b">
+-      <default>false</default>
+-      <summary>Use set dark mode</summary>
+-      <description>.</description>
+-    </key>
+-    <key name="style-name-dm" type="s">
+-      <default>''</default>
+-      <summary>Use record theme style,when dark mode is true record the /org/ukui/style's key style-name,when dark mode is false set this value to the style-name.</summary>
+-      <description>.</description>
+-    </key>
+-    <key name="night-light-enabled-dm" type="b">
+-      <default>false</default>
+-      <summary>If the night light mode is enabled</summary>
+-      <description>Use record theme style,when dark mode is true record the night-light-enabled,when dark mode is false set this value to it.</description>
+-    </key>
+-    <key name="night-light-allday-dm" type="b">
+-      <default>false</default>
+-      <summary>Open night light all day</summary>
+-      <description>Use record theme style,when dark mode is true record the night-light-allday,when dark mode is false set this value to it.</description>
+-    </key>
+-    <key name="night-light-schedule-automatic-dm" type="b">
+-      <default>false</default>
+-      <summary>Use the sunrise and sunset to set theme</summary>
+-      <description>Use record theme style,when dark mode is true record the night-light-schedule-automatic,when dark mode is false set this value to it.</description>
+-    </key>
+-    <key name="theme-schedule-automatic-dm" type="b">
+-      <default>false</default>
+-      <summary>Use the sunrise and sunset to set theme</summary>
+-      <description>Use record theme style,when dark mode is true record the theme-schedule-automatic,when dark mode is false set this value to it.</description>
+-    </key>
+-    <key name="had-set-edu" type="b">
+-      <default>false</default>
+-      <summary>Use the edu config</summary>
+-      <description>.</description>
+-    </key>
+-  </schema>
+-</schemalist>
+diff --git a/data/org.ukui.SettingsDaemon.plugins.media-keys.gschema.xml b/data/org.ukui.SettingsDaemon.plugins.media-keys.gschema.xml
+index c7aac7a..4d88c3c 100644
+--- a/data/org.ukui.SettingsDaemon.plugins.media-keys.gschema.xml
++++ b/data/org.ukui.SettingsDaemon.plugins.media-keys.gschema.xml
+@@ -176,17 +176,17 @@
+       <description>Open mate terminal.</description>
+     </key>
+     <key name="screenshot" type="s">
+-      <default>'Print'</default>
++      <default>'PrtSc'</default>
+       <summary>Take a screenshot</summary>
+       <description>Binding to take a screenshot.</description>
+     </key>
+     <key name="window-screenshot" type="s">
+-      <default>'&lt;Ctrl&gt;Print'</default>
++      <default>'&lt;Ctrl&gt;PrtSc'</default>
+       <summary>Take a screenshot of a window</summary>
+       <description>Binding to take a screenshot of a window.</description>
+     </key>
+     <key name="area-screenshot" type="s">
+-      <default>'&lt;Shift&gt;Print'</default>
++      <default>'&lt;Shift&gt;PrtSc'</default>
+       <summary>Take a screenshot of an area</summary>
+       <description>Binding to take a screenshot of an area.</description>
+     </key>
+diff --git a/plugins/gamma-manager/color.pro b/plugins/gamma-manager/color.pro
+new file mode 100644
+index 0000000..f5cedd3
+--- /dev/null
++++ b/plugins/gamma-manager/color.pro
+@@ -0,0 +1,78 @@
++QT -= gui
++QT += network
++
++TEMPLATE = lib
++TARGET = color
++DEFINES += DEMO_LIBRARY
++
++#link_pkgconfig no_keywords plugin app_bundlels 必须要加否则会出现so文件版本的链接
++CONFIG += c++11  link_pkgconfig no_keywords plugin app_bundlels
++
++# The following define makes your compiler emit warnings if you use
++# any Qt feature that has been marked deprecated (the exact warnings
++# depend on your compiler). Please consult the documentation of the
++# deprecated API in order to know how to port your code away from it.
++DEFINES += QT_DEPRECATED_WARNINGS MODULE_NAME=\\\"color\\\"
++#DEFINES += TEST_HTTP
++INCLUDEPATH += \
++        -I ukui-settings-daemon/
++
++include($$PWD/../../common/common.pri)
++# You can also make your code fail to compile if it uses deprecated APIs.
++# In order to do so, uncomment the following line.
++# You can also select to disable deprecated APIs only up to a certain version of Qt.
++#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
++
++SOURCES += \
++    gamma-manager-adaptor.cpp \
++    gamma-manager-dbus.cpp \
++    gamma-manager-gtkconfig.cpp \
++    gamma-manager-helper.cpp \
++    gamma-manager-location.cpp \
++    gamma-manager-plugin.cpp \
++    gamma-manager-thread.cpp \
++    gamma-manager-wayland.cpp \
++    gamma-manager.cpp \
++    pingpongtest.cpp
++
++HEADERS += \
++    gamma-color-info.h \
++    gamma-manager-adaptor.h \
++    gamma-manager-dbus.h \
++    gamma-manager-define.h \
++    gamma-manager-gtkconfig.h \
++    gamma-manager-helper.h \
++    gamma-manager-location.h \
++    gamma-manager-plugin.h \
++    gamma-manager-thread.h \
++    gamma-manager-wayland.h \
++    gamma-manager.h \
++    pingpongtest.h \
++    rgb-gamma-table.h
++
++# Default rules for deployment.
++#    OTHER_FILES += org.ukui.peripherals-keyboard.demoplugin.xml
++
++
++    demoplugin_lib.path = $${PLUGIN_INSTALL_DIRS}
++    demoplugin_lib.files =  $$OUT_PWD/libcolor.so
++
++    demoplugin_info.path = $$[QT_INSTALL_LIBS]/ukui-settings-daemon
++    demoplugin_info.files = $$OUT_PWD/color.ukui-settings-plugin
++
++    demoplugin_schema.path = /usr/share/glib-2.0/schemas/
++    demoplugin_schema.files = $$OUT_PWD/org.ukui.SettingsDaemon.plugins.color.gschema.xml
++
++#禁用优化
++QMAKE_CFLAGS_DEBUG -= O2
++QMAKE_CXXFLAGS_DEBUG -= -O2
++
++QMAKE_CFLAGS_RELEASE -= O2
++QMAKE_CXXFLAGS_RELEASE -= -O2
++
++#lib must at last
++INSTALLS +=  demoplugin_info demoplugin_schema demoplugin_lib
++
++DISTFILES += \
++    color.ukui-settings-plugin \
++    org.ukui.SettingsDaemon.plugins.color.gschema.xml
+diff --git a/plugins/gamma-manager/color.ukui-settings-plugin b/plugins/gamma-manager/color.ukui-settings-plugin
+new file mode 100644
+index 0000000..fdb95e2
+--- /dev/null
++++ b/plugins/gamma-manager/color.ukui-settings-plugin
+@@ -0,0 +1,9 @@
++[UKUI Settings Plugin]
++Module=color
++IAge=0
++Name=Color
++Name[zh_CN]=色温调整
++Description=Color plugin
++Authors=Leon Sun
++Copyright=Copyright (C) 2020 KylinSoft Co., Ltd.
++Website=
+diff --git a/plugins/gamma-manager/gamma-color-info.h b/plugins/gamma-manager/gamma-color-info.h
+new file mode 100644
+index 0000000..7d7b698
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-color-info.h
+@@ -0,0 +1,45 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#ifndef GAMMACOLORINFO_H
++#define GAMMACOLORINFO_H
++#include <QDBusArgument>
++
++struct ColorInfo{
++    QString arg;
++    QDBusVariant out;
++};
++
++inline QDBusArgument &operator<<(QDBusArgument &argument, const ColorInfo &mystruct)
++{
++    argument.beginStructure();
++    argument << mystruct.arg << mystruct.out;
++    argument.endStructure();
++    return argument;
++}
++
++inline const QDBusArgument &operator>>(const QDBusArgument &argument, ColorInfo &mystruct)
++{
++    argument.beginStructure();
++    argument >> mystruct.arg >> mystruct.out;
++    argument.endStructure();
++    return argument;
++}
++
++Q_DECLARE_METATYPE(ColorInfo)
++#endif // GAMMACOLORINFO_H
+diff --git a/plugins/gamma-manager/gamma-manager-adaptor.cpp b/plugins/gamma-manager/gamma-manager-adaptor.cpp
+new file mode 100644
+index 0000000..31545d5
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-adaptor.cpp
+@@ -0,0 +1,83 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "gamma-manager-adaptor.h"
++
++GmAdaptor::GmAdaptor(QObject *parent) :
++    QDBusAbstractAdaptor(parent)
++{
++    // constructor
++    setAutoRelaySignals(true);
++    qRegisterMetaType<OutputGammaInfo>("OutputGammaInfo");
++    qRegisterMetaType<OutputGammaInfoList>("OutputGammaInfoList");
++    qDBusRegisterMetaType<OutputGammaInfo>();
++    qDBusRegisterMetaType<OutputGammaInfoList>();
++}
++
++GmAdaptor::~GmAdaptor()
++{
++
++}
++
++int GmAdaptor::setColorTemperature(QString appName, int colorTemp)
++{
++    int out0;
++    USD_LOG(LOG_DEBUG," appName:%s", appName.toLatin1().data());
++    QMetaObject::invokeMethod(parent(), "setColorTemperature", Q_RETURN_ARG(int, out0), Q_ARG(int, colorTemp));
++    return out0;
++}
++
++int GmAdaptor::setScreenBrightness(QString appName, QString screenName, int screenBrightness)
++{
++    int out0;
++    USD_LOG(LOG_DEBUG," appName:%s", appName.toLatin1().data());
++    QMetaObject::invokeMethod(parent(), "setScreenBrightness", Q_RETURN_ARG(int, out0),  Q_ARG(QString, screenName), Q_ARG(int, screenBrightness));
++    return out0;
++}
++
++int GmAdaptor::setAllScreenBrightness(QString appName, int screenBrightness)
++{
++    int out0;
++    USD_LOG(LOG_DEBUG," appName:%s", appName.toLatin1().data());
++    QMetaObject::invokeMethod(parent(), "setAllScreenBrightness", Q_RETURN_ARG(int, out0), Q_ARG(int, screenBrightness));
++    return out0;
++}
++
++OutputGammaInfo GmAdaptor::getScreensGamma(QString appName)
++{
++    OutputGammaInfo out0;
++    USD_LOG(LOG_DEBUG," appName:%s", appName.toLatin1().data());
++    QMetaObject::invokeMethod(parent(), "getScreensGamma", Q_RETURN_ARG(OutputGammaInfo, out0));
++    return out0;
++}
++
++OutputGammaInfoList GmAdaptor::getScreensGammaList(QString appName)
++{
++    OutputGammaInfoList out0;
++    USD_LOG(LOG_DEBUG," appName:%s", appName.toLatin1().data());
++    QMetaObject::invokeMethod(parent(), "getScreensGammaList", Q_RETURN_ARG(OutputGammaInfoList, out0));
++    return out0;
++}
++
++QHash<QString, QVariant> GmAdaptor::getScreensGammaInfo()
++{
++    QHash<QString, QVariant> out0;
++//    QMetaObject::invokeMethod(parent(), "getScreensGammaInfo", Q_RETURN_ARG(QHash<QString, QVariant>, out0));
++    return out0;
++}
+diff --git a/plugins/gamma-manager/gamma-manager-adaptor.h b/plugins/gamma-manager/gamma-manager-adaptor.h
+new file mode 100644
+index 0000000..d8592c9
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-adaptor.h
+@@ -0,0 +1,134 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#ifndef GAMMAMANAGERADAPTOR_H
++#define GAMMAMANAGERADAPTOR_H
++#include <QtCore/QObject>
++#include <QtDBus/QtDBus>
++#include <QMetaType>
++#include <QDBusMetaType>
++#include "clib-syslog.h"
++
++QT_BEGIN_NAMESPACE
++class QByteArray;
++template<class T> class QList;
++template<class Key, class Value> class QMap;
++class QString;
++class QStringList;
++class QVariant;
++QT_END_NAMESPACE
++
++
++
++struct OutputGammaInfo{
++    QString OutputName;
++    uint    Gamma;
++    uint    Brignthess;
++    uint    Temperature;
++};
++
++typedef QList<OutputGammaInfo> OutputGammaInfoList;
++
++Q_DECLARE_METATYPE(OutputGammaInfo)
++Q_DECLARE_METATYPE(OutputGammaInfoList)
++
++inline QDBusArgument &operator << (QDBusArgument &argument, const OutputGammaInfo &outputInfo)
++{
++    argument.beginStructure();
++    argument << outputInfo.OutputName;
++    argument << outputInfo.Gamma;
++    argument << outputInfo.Brignthess;
++    argument << outputInfo.Temperature;
++    argument.endStructure();
++
++    return argument;
++}
++
++inline const QDBusArgument &operator >> (const QDBusArgument &argument, OutputGammaInfo &outputInfo) {
++    argument.beginStructure();
++    argument >> outputInfo.OutputName;
++    argument >> outputInfo.Gamma;
++    argument >> outputInfo.Temperature;
++    argument >> outputInfo.Brignthess;
++    argument.endStructure();
++    return argument;
++}
++
++
++class GmAdaptor: public QDBusAbstractAdaptor
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", DBUS_GM_INTERFACE)
++    Q_CLASSINFO("D-Bus Introspection", ""
++                                       "  <interface name=\"org.ukui.SettingsDaemon.gammaManager\">\n"
++                                       "    <signal name=\"screensGammaChanged\">\n"
++                                       "        <arg direction=\"out\" type=\"s\" name=\"screenName\"/>\n"
++                                       "        <arg direction=\"out\" type=\"i\" name=\"screensBrightness\"/>\n"
++                                       "        <arg direction=\"out\" type=\"i\" name=\"screenGamma\"/>\n"
++                                       "    </signal>\n"
++                                       "    <method name=\"setScreenBrightness\">\n"
++                                       "      <arg direction=\"out\" type=\"i\"/>\n"
++                                       "      <arg direction=\"in\" type=\"s\" name=\"appName\"/>\n"
++                                       "      <arg direction=\"in\" type=\"s\" name=\"screenName\"/>\n"
++                                       "      <arg direction=\"in\" type=\"i\" name=\"screenBrightness\"/>\n"
++                                       "    </method>\n"
++                                       "    <method name=\"setAllScreenBrightness\">\n"
++                                       "      <arg direction=\"out\" type=\"i\"/>\n"
++                                       "      <arg direction=\"in\" type=\"s\" name=\"appName\"/>\n"
++                                       "      <arg direction=\"in\" type=\"i\" name=\"screenBrightness\"/>\n"
++                                       "    </method>\n"
++                                       "    <method name=\"setColorTemperature\">\n"
++                                       "      <arg direction=\"out\" type=\"i\"/>\n"
++                                       "      <arg direction=\"in\" type=\"s\" name=\"appName\"/>\n"
++                                       "      <arg direction=\"in\" type=\"i\" name=\"temp\"/>\n"
++                                       "    </method>\n"
++                                       "    <method name=\"getScreensGamma\">\n"
++                                       "      <annotation name=\"org.qtproject.QtDBus.QtTypeName.Out\" value=\"OutputGammaInfo\"/>\n"
++                                       "      <arg direction=\"out\" type=\"(suu)\"/>\n"
++                                       "      <arg direction=\"in\" type=\"s\" name=\"appName\"/>\n"
++                                       "    </method>\n"
++                                       "    <method name=\"getScreensGammaList\">\n"
++                                       "      <annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"OutputGammaInfoList\"/>\n"
++                                       "      <arg direction=\"out\" type=\"a{suu}\"/>\n"
++                                       "      <arg direction=\"in\" type=\"s\" name=\"appName\"/>\n"
++                                       "    </method>\n"
++                                       "     <method name=\"getScreensGammaInfo\">\n"
++                                       "        <annotation name=\"org.qtproject.QtDBus.QtTypeName.Out\" value=\"QHash<QString,QVariant>\"/>\n"
++                                       "        <arg type=\"a{sv}\" direction=\"out\"/>\n"
++                                       "    </method>\n"
++                                       "  </interface>\n"
++                                       "")
++public:
++    GmAdaptor(QObject *parent = nullptr);
++    ~GmAdaptor();
++
++public Q_SLOTS: // METHODS
++    int setColorTemperature(QString appName, int screenBrightness);
++    int setScreenBrightness(QString appName, QString screenName, int screenBrightness);
++    int setAllScreenBrightness(QString appName, int screenBrightness);
++    OutputGammaInfo getScreensGamma(QString appName);
++    OutputGammaInfoList getScreensGammaList(QString appName);
++    QHash<QString, QVariant> getScreensGammaInfo();
++Q_SIGNALS:
++    void screenGammChanged(QString screenName, int screenBrightness, int screenGamma);
++};
++
++
++
++
++#endif // GAMMAMANAGERADAPTOR_H
+diff --git a/plugins/gamma-manager/gamma-manager-dbus.cpp b/plugins/gamma-manager/gamma-manager-dbus.cpp
+new file mode 100644
+index 0000000..73c5d78
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-dbus.cpp
+@@ -0,0 +1,86 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include <QDBusConnection>
++#include <QDBusInterface>
++
++#include "gamma-manager-dbus.h"
++#include "gamma-manager.h"
++GmDbus::GmDbus(QObject* parent): QObject(parent)
++{
++    QDBusConnection::sessionBus().registerObject("0", this, QDBusConnection::ExportAllSlots);
++}
++
++GmDbus::~GmDbus()
++{
++
++}
++
++int GmDbus::setScreenBrightness(QString appName, QString screenName, unsigned int screenBrightness)
++{
++    if (screenBrightness > 100) {
++        USD_LOG(LOG_DEBUG, "app %s set bad value(%d) to %s", appName.toLatin1().data(), screenBrightness, screenName.toLatin1().data());
++        return -1;
++    }
++    Q_EMIT screenBrightnessChanged(screenName, screenBrightness);
++    return 0;
++}
++
++int GmDbus::setAllScreenBrightness(QString appName, unsigned int screenBrightness)
++{
++    if (screenBrightness > 100) {
++        USD_LOG(LOG_DEBUG, "app %s set bad value(%d)", appName.toLatin1().data(), screenBrightness);
++        return -1;
++    }
++    Q_EMIT allScreenBrightnessChanged("all",screenBrightness);
++    return 0;
++}
++
++OutputGammaInfo GmDbus::getScreensGamma(QString appName)
++{
++    GammaManager *pGmManager =  static_cast<GammaManager*>(this->parent());
++    return pGmManager->getScreensInfo();
++}
++
++OutputGammaInfoList GmDbus::getScreensGammaList(QString appName)
++{
++    GammaManager *pGmManager = static_cast<GammaManager*>(this->parent());
++    return pGmManager->getScreensInfoList();
++}
++
++
++QHash<QString, QVariant> GmDbus::getScreensGammaInfo(QString appName)
++{
++    return QHash<QString, QVariant> {
++
++           { QStringLiteral("ActiveEnabled"), true},
++
++
++           { QStringLiteral("ModeEnabled"), true}
++    };
++}
++
++int GmDbus::setColorTemperature(QString appName,unsigned int colorTemp)
++{
++    if (colorTemp > 8000 || colorTemp < 1100) {
++        USD_LOG(LOG_DEBUG, "app %s set bad value(%d)", appName.toLatin1().data(), colorTemp);
++        return -1;
++    }
++    GammaManager *pGmManager =  static_cast<GammaManager*>(this->parent());
++    return pGmManager->setTemperature(colorTemp);
++}
+diff --git a/plugins/gamma-manager/gamma-manager-dbus.h b/plugins/gamma-manager/gamma-manager-dbus.h
+new file mode 100644
+index 0000000..a0234de
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-dbus.h
+@@ -0,0 +1,86 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#ifndef GMDBUS_H
++#define GMDBUS_H
++#include <QObject>
++#include <QDBusArgument>
++#include "clib-syslog.h"
++#include "gamma-manager-adaptor.h"
++
++class GmDbus: public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface", DBUS_GM_INTERFACE)
++public:
++    GmDbus(QObject* parent = 0);
++    ~GmDbus();
++public Q_SLOTS:
++    /**
++     * @brief setScreenBrightness
++     * @param appName
++     * @param screenName
++     * @param screenBrightness
++     * @return
++     */
++    int setScreenBrightness(QString appName, QString screenName,unsigned int screenBrightness);
++
++    /**
++     * @brief setAllScreenBrightness
++     * @param appName
++     * @param screenBrightness
++     * @return
++     */
++    int setAllScreenBrightness(QString appName,unsigned int screenBrightness);
++
++    /**
++     * @brief getScreensGamma
++     * @param appName
++     * @return
++     */
++    OutputGammaInfo getScreensGamma(QString appName);
++
++    /**
++     * @brief getScreensGammaList
++     * @param appName
++     * @return
++     */
++    OutputGammaInfoList getScreensGammaList(QString appName);
++
++    /**
++     * @brief getScreensGammaInfo
++     * @param appName
++     * @return
++     */
++    QHash<QString, QVariant> getScreensGammaInfo(QString appName);
++
++    /**
++     * @brief setColorTemperature
++     * @param appName
++     * @param colorTemp
++     * @return
++     */
++    int setColorTemperature(QString appName,unsigned int colorTemp);
++
++Q_SIGNALS:
++    void screenGammaChanged(QString screenName, int screenBrightness, int screenGamma);
++    void screenBrightnessChanged(QString screenName, int screenBrightness);
++    void allScreenBrightnessChanged(QString screenName,int screenBrightness);
++};
++
++#endif // GMDBUS_H
+diff --git a/plugins/gamma-manager/gamma-manager-define.h b/plugins/gamma-manager/gamma-manager-define.h
+new file mode 100644
+index 0000000..f82e8d3
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-define.h
+@@ -0,0 +1,79 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef __COLORDEFINE_H__
++#define __COLORDEFINE_H__
++
++#define USD_COLOR_SCHEMA            "org.ukui.SettingsDaemon.plugins.color"
++#define COLOR_KEY_LAST_COORDINATES  "night-light-last-coordinates"
++#define COLOR_KEY_ENABLED           "night-light-enabled"
++#define COLOR_KEY_ALLDAY            "night-light-allday"
++#define COLOR_KEY_AUTO_THEME        "theme-schedule-automatic"
++#define COLOR_KEY_TEMPERATURE       "night-light-temperature"
++#define COLOR_KEY_AUTOMATIC         "night-light-schedule-automatic"
++#define COLOR_KEY_AUTOMATIC_FROM    "night-light-schedule-automatic-from"
++#define COLOR_KEY_AUTOMATIC_TO      "night-light-schedule-automatic-to"
++#define COLOR_KEY_FROM              "night-light-schedule-from"
++#define COLOR_KEY_TO                "night-light-schedule-to"
++#define COLOR_KEY_ACTIVE            "active"
++#define COLOR_KEY_DARK_MODE         "dark-mode"
++#define COLOR_KEY_ENABLED_DM        "night-light-enabled-dm"
++#define COLOR_KEY_ALLDAY_DM         "night-light-allday-dm"
++#define COLOR_KEY_AUTOMATIC_DM      "night-light-schedule-automatic-dm"
++#define COLOR_KEY_STYLE_NAME_DM     "style-name-dm"
++#define COLOR_KEY_REAL_TIME_TEMPERATURE "real-time-temperature"
++#define HAD_SET_EDU                  "had-set-edu"
++
++#define COLOR_KEY_AUTO_THEME_DM     "theme-schedule-automatic-dm"
++#define GTK_THEME_SCHEMA            "org.mate.interface"
++#define GTK_THEME_KEY               "gtk-theme"
++
++#define QT_THEME_SCHEMA             "org.ukui.style"
++#define QT_THEME_KEY                "style-name"
++
++#define HAD_READ_KWIN               "had-read-kwin-config"
++
++#define KWIN_COLOR_ACTIVE            "Active"
++#define KWIN_COLOR_ACTIVE_ENABLE     "ActiveEnabled"
++#define KWIN_NIGHT_TEMP              "NightTemperature"
++#define KWIN_COLOR_MODE              "Mode"
++#define KWIN_COLOR_START             "EveningBeginFixed"
++#define KWIN_COLOR_END               "MorningBeginFixed"
++#define KWIN_CURRENT_TEMP            "CurrentColorTemperature"
++#define KWIN_LATITUDE                "LatitudeFixed"
++#define KWIN_LONGITUDE               "LongitudeFixed"
++
++#define USD_NIGHT_LIGHT_SCHEDULE_TIMEOUT    5       /* seconds */
++#define USD_NIGHT_LIGHT_POLL_TIMEOUT        60      /* seconds */
++#define USD_NIGHT_LIGHT_POLL_SMEAR          1       /* hours */
++#define USD_NIGHT_LIGHT_SMOOTH_SMEAR        5.f     /* seconds */
++
++#define USD_FRAC_DAY_MAX_DELTA              (1.f/60.f)     /* 1 minute */
++#define USD_TEMPERATURE_MAX_DELTA           (10.f)
++
++
++#define IP_API_ADDRESS_BACKUP  "http://ip-api.com/json/"
++#define IP_API_ADDRESS  "https://location.services.mozilla.com/v1/geolocate?key=geoclue"
++#define USD_CHECK_RETURN(A,B)  if(!(A)) {return B;}
++
++#define COLOR_TEMPERATURE_DEFAULT  6500
++#define COLOR_MIN_TEMPERATURE   1000
++
++
++#endif
+diff --git a/plugins/gamma-manager/gamma-manager-gtkconfig.cpp b/plugins/gamma-manager/gamma-manager-gtkconfig.cpp
+new file mode 100644
+index 0000000..fa63da7
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-gtkconfig.cpp
+@@ -0,0 +1,176 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "gamma-manager-gtkconfig.h"
++#include <QPalette>
++
++#include <QString>
++#include <QVariant>
++#include <QDebug>
++#include <QStandardPaths>
++#include <QFile>
++#include <QFileInfo>
++#include <QDir>
++#include <QCoreApplication>
++
++#include "clib-syslog.h"
++
++#define THEME_COLOR        "theme-color"
++#define GTK_THEME          "gtk-theme"
++
++UkuiGtkConfig::UkuiGtkConfig(QObject *parent)
++{
++    const QByteArray id(UKUI_STYLE_SCHEMA);
++    const QByteArray id2(MATE_INTERFACE_SCHEMA);
++    m_colorGsettings = new QGSettings(id);
++    m_gtkThemeGsettings = new QGSettings(id2);
++}
++
++UkuiGtkConfig::~UkuiGtkConfig(){
++    delete m_colorGsettings;
++    delete m_gtkThemeGsettings;
++}
++
++void UkuiGtkConfig::connectGsettingSignal(){
++    QObject::connect(m_colorGsettings, SIGNAL(changed(QString))/*&QGSettings::changed*/, this, SLOT(doGsettingsChanged(QString)));
++}
++
++void UkuiGtkConfig::addImportStatementsToGtkCssUserFile(){
++    QString gtkStylePath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/gtk-3.0");
++
++    QDir gtkStyle(gtkStylePath);
++    if (!gtkStyle.exists(gtkStylePath)) {
++        gtkStyle.mkdir(gtkStylePath);
++    }
++
++    QString gtkCssPath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/gtk-3.0/gtk.css");
++    QFile gtkCss(gtkCssPath);
++
++    if (gtkCss.open(QIODevice::ReadWrite)) {
++        QByteArray gtkCssContents = gtkCss.readAll().trimmed();
++
++        static const QVector<QByteArray> importStatements{
++            QByteArrayLiteral("\n@import 'colors.css';"),
++        };
++
++        for (const auto &statement : importStatements) {
++            if (!gtkCssContents.contains(statement.trimmed())) {
++                gtkCssContents.append(statement);
++            }
++        }
++
++        gtkCss.remove();
++        gtkCss.open(QIODevice::WriteOnly | QIODevice::Text);
++        gtkCss.write(gtkCssContents);
++    }
++}
++
++void UkuiGtkConfig::modifyColorsCssFile(QString colorsDefinitions){
++    QString colorsCssPath = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation) + QStringLiteral("/gtk-3.0/colors.css");
++    QFile colorsCss(colorsCssPath);
++
++    if (colorsCss.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
++        QTextStream colorsCssStream(&colorsCss);
++        colorsCssStream << endl << QStringLiteral("@define-color hover_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color hover_bd_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color active_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color active_bd_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color selected_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color selected_borders_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color bt_hover_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color bt_hover_bd_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color bt_active_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color bt_active_bd_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color bt_selected_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color bt_selected_borders_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color crb_active_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color crb_hover_bd_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color crb_active_bd_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color success_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_active_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_prelight_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_selected_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_checked_bg_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_active_border_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_prelight_border_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_active_bg_image_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color base_checked_bg_image_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color trough_filled_space_normal_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++        colorsCssStream << endl << QStringLiteral("@define-color toolbar_button_bg_active_color_ukui ")+colorsDefinitions+QStringLiteral(";");
++    }
++}
++
++
++QString UkuiGtkConfig::converRGBToHex(QColor color){
++    QString RGBred = QString("%1").arg(color.red(),2,16,QChar('0'));
++    QString RGBgreen = QString("%1").arg(color.green(),2,16,QChar('0'));
++    QString RGBblue = QString("%1").arg(color.blue(),2,16,QChar('0'));
++
++    QString RGBToHex = "#"+RGBred+RGBgreen+RGBblue;
++
++    return RGBToHex;
++}
++
++void UkuiGtkConfig::doGsettingsChanged(QString key)
++{
++//    USD_LOG(LOG_DEBUG,".%s.",key.toLatin1().data());
++    if(key == THEME_COLOR){
++        USD_LOG(LOG_DEBUG,"..");
++        qDebug() << endl << m_colorGsettings->get(THEME_COLOR).toString();
++        qDebug() << endl << m_gtkThemeGsettings->get(GTK_THEME).toString();
++        QString gtkTheme = m_gtkThemeGsettings->get(GTK_THEME).toString();
++        QString themeColor = m_colorGsettings->get(THEME_COLOR).toString();
++
++        if(gtkTheme == "ukui-white" || gtkTheme == "ukui-black"){
++
++            addImportStatementsToGtkCssUserFile();
++            QColor colorRGB;
++
++            if (themeColor == "jamPurple") {
++                colorRGB = QColor(120, 115, 245);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            } else if (themeColor == "magenta") {
++                colorRGB = QColor(235, 48, 150);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            } else if (themeColor == "sunRed") {
++                colorRGB = QColor(243, 34, 45);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            } else if (themeColor == "sunsetOrange") {
++                colorRGB = QColor(246, 140, 39);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            } else if (themeColor == "dustGold") {
++                colorRGB = QColor(249, 197, 61);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            } else if (themeColor == "polarGreen") {
++                colorRGB = QColor(82, 196, 41);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            } else {
++                colorRGB = QColor(55, 144, 250);
++                qDebug() << endl << colorRGB << endl << themeColor;
++            }
++
++            QString colorHex = converRGBToHex(colorRGB);
++            qDebug() << endl << colorRGB << endl << colorHex;
++            modifyColorsCssFile(colorHex);
++
++        } else {
++            qDebug() << gtkTheme;
++        }
++    }
++}
+diff --git a/plugins/gamma-manager/gamma-manager-gtkconfig.h b/plugins/gamma-manager/gamma-manager-gtkconfig.h
+new file mode 100644
+index 0000000..50a8592
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-gtkconfig.h
+@@ -0,0 +1,61 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef UKUIGTKCONFIG_H
++#define UKUIGTKCONFIG_H
++
++#include <QObject>
++#include "QGSettings/qgsettings.h"
++class UkuiGtkConfig : public QObject
++{
++    Q_OBJECT
++public:
++    UkuiGtkConfig(QObject *parent = nullptr);
++    ~UkuiGtkConfig();
++
++    /**
++     * @brief connectGsettingSignal
++     */
++    void connectGsettingSignal();
++
++    /**
++     * @brief addImportStatementsToGtkCssUserFile
++     */
++    void addImportStatementsToGtkCssUserFile();
++
++    /**
++     * @brief modifyColorsCssFile
++     * @param colorsDefinitions
++     */
++    void modifyColorsCssFile(QString colorsDefinitions);
++
++    /**
++     * @brief converRGBToHex
++     * @param color
++     * @return
++     */
++    QString converRGBToHex(QColor color);
++public Q_SLOTS:
++    void doGsettingsChanged(QString key);
++private:
++     QGSettings *m_colorGsettings;
++     QGSettings *m_gtkThemeGsettings;
++};
++
++#endif // UKUIGTKCONFIG_H
+diff --git a/plugins/gamma-manager/gamma-manager-helper.cpp b/plugins/gamma-manager/gamma-manager-helper.cpp
+new file mode 100644
+index 0000000..8561b92
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-helper.cpp
+@@ -0,0 +1,575 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "gamma-manager-helper.h"
++
++static int
++find_last_non_clamped(unsigned short  array[], int size) {
++    int i;
++    for (i = size - 1; i > 0; i--) {
++        if (array[i] < 0xffff)
++        return i;
++    }
++    return 0;
++}
++
++GmHelper::GmHelper(QObject *parent)
++{
++    m_temperature = COLOR_TEMPERATURE_DEFAULT;
++    initOutput();
++}
++
++GmHelper::~GmHelper()
++{
++    if (m_pScreenRes) {
++        XRRFreeScreenResources(m_pScreenRes);
++    }
++}
++
++bool GmHelper::getLonAndLatByJson(QString url, QByteArray bytes, QSizeF& psize)
++{
++    if(!url.compare(IP_API_ADDRESS,Qt::CaseInsensitive)) {
++        return getLonAndLatMozilla(bytes, psize);
++    } else if(!url.compare(IP_API_ADDRESS_BACKUP,Qt::CaseInsensitive)) {
++        return getLonAndLatIPAPI(bytes, psize);
++    }
++
++    return 0;
++}
++
++bool GmHelper::getLonAndLatIPAPI(QByteArray jsonBytes, QSizeF& psize)
++{
++    QStringList keysList;
++    QJsonParseError parseError;
++    QJsonDocument rootDoc = QJsonDocument::fromJson(jsonBytes, &parseError);
++    if (parseError.error != QJsonParseError::NoError) {
++        USD_LOG(LOG_ERR, "%s parse error",jsonBytes.data());
++        return 0;
++    }
++
++    QJsonObject rootObj = rootDoc.object();
++    keysList = rootObj.keys();
++    if (!keysList.contains("lon") || !keysList.contains("lat")) {
++        USD_LOG(LOG_ERR, "%s parse error can't find log or lat",jsonBytes.data());
++        return 0;
++    }
++
++    QJsonValue lonValue = rootObj["lon"];
++    QJsonValue latValue = rootObj["lat"];
++
++    psize.setHeight(lonValue.toDouble());
++    psize.setWidth(latValue.toDouble());
++    return 1;
++}
++
++bool GmHelper::getLonAndLatMozilla(QByteArray jsonBytes, QSizeF &psize)
++{
++    QStringList keysList;
++    QJsonParseError parseError;
++    QJsonDocument rootDoc = QJsonDocument::fromJson(jsonBytes, &parseError);
++    if (parseError.error != QJsonParseError::NoError) {
++        USD_LOG(LOG_ERR, "%s parse error",jsonBytes.data());
++        return 0;
++    }
++
++    QJsonObject rootObj = rootDoc.object();
++    keysList = rootObj.keys();
++    if (!keysList.contains("location")) {
++        USD_LOG(LOG_ERR, "%s parse error can't find log or lat",jsonBytes.data());
++        return 0;
++    }
++
++    QJsonValue valueArray = rootObj["location"];
++    QJsonValue latValue = valueArray["lat"];
++    QJsonValue lonValue = valueArray["lng"];
++    if (!lonValue.toDouble() || !latValue.toDouble()) {
++         USD_LOG(LOG_ERR, "%s parse error can't find log or lng(%f,%f)",jsonBytes.data(), lonValue.toDouble(), latValue.toDouble());
++        return 0;
++    }
++    psize.setHeight(lonValue.toDouble());
++    psize.setWidth(latValue.toDouble());
++    return 1;
++}
++
++bool GmHelper::getSunriseSunset(QDateTime &rtDate, QSizeF &location, QSizeF &SunriseSunset)
++{
++//    g_autoptr(GDateTime) dt_zero = g_date_time_new_utc (1900, 1, 1, 0, 0, 0);
++//    GTimeSpan ts = g_date_time_difference (dt, dt_zero);
++    QDateTime  dtZero = QDateTime::fromString("1900-01-01 00:00.000", Qt::ISODate);//1900, 1, 1, 0, 0, 0
++    quint64 ts = dtZero.msecsTo(rtDate);
++
++    USD_CHECK_RETURN(location.width() <=90.f && location.width() >= -90.f, false);
++    USD_CHECK_RETURN(location.height() <=180.f && location.height() >= -180.f, false);
++    double pos_lat = location.width();
++    double pos_long = location.height();
++    double tz_offset = rtDate.offsetFromUtc() / 60 / 60;
++    double date_as_number = ts / 1000 / 24 / 60 / 60 + 2;  // B7
++    double time_past_local_midnight = 0;  // E2, unused in this calculation
++    double julian_day = date_as_number + 2415018.5 +
++            time_past_local_midnight - tz_offset / 24;
++    double julian_century = (julian_day - 2451545) / 36525;
++    double geom_mean_long_sun =  fmod (280.46646 + julian_century *
++                                      (36000.76983 + julian_century * 0.0003032), 360); // I2
++    double geom_mean_anom_sun = 357.52911 + julian_century *
++            (35999.05029 - 0.0001537 * julian_century);  // J2
++    double eccent_earth_orbit = 0.016708634 - julian_century *
++            (0.000042037 + 0.0000001267 * julian_century); // K2
++    double sun_eq_of_ctr = sin (deg2rad (geom_mean_anom_sun)) *
++            (1.914602 - julian_century * (0.004817 + 0.000014 * julian_century)) +
++            sin (deg2rad (2 * geom_mean_anom_sun)) * (0.019993 - 0.000101 * julian_century) +
++            sin (deg2rad (3 * geom_mean_anom_sun)) * 0.000289; // L2
++    double sun_true_long = geom_mean_long_sun + sun_eq_of_ctr; // M2
++    double sun_app_long = sun_true_long - 0.00569 - 0.00478 *
++            sin (deg2rad (125.04 - 1934.136 * julian_century)); // P2
++    double mean_obliq_ecliptic = 23 +  (26 +  ((21.448 - julian_century *
++                                                (46.815 + julian_century * (0.00059 - julian_century * 0.001813)))) / 60) / 60; // Q2
++    double obliq_corr = mean_obliq_ecliptic + 0.00256 *
++            cos (deg2rad (125.04 - 1934.136 * julian_century)); // R2
++    double sun_declin = rad2deg (asin (sin (deg2rad (obliq_corr)) *
++                                       sin (deg2rad (sun_app_long)))); // T2
++    double var_y = tan (deg2rad (obliq_corr/2)) * tan (deg2rad (obliq_corr / 2)); // U2
++    double eq_of_time = 4 * rad2deg (var_y * sin (2 * deg2rad (geom_mean_long_sun)) -
++                                     2 * eccent_earth_orbit * sin (deg2rad (geom_mean_anom_sun)) +
++                                     4 * eccent_earth_orbit * var_y *
++                                     sin (deg2rad (geom_mean_anom_sun)) *
++                                     cos (2 * deg2rad (geom_mean_long_sun)) -
++                                     0.5 * var_y * var_y * sin (4 * deg2rad (geom_mean_long_sun)) -
++                                     1.25 * eccent_earth_orbit * eccent_earth_orbit *
++                                     sin (2 * deg2rad (geom_mean_anom_sun))); // V2
++    double ha_sunrise = rad2deg (acos (cos (deg2rad (90.833)) / (cos (deg2rad (pos_lat)) *
++                                                                 cos (deg2rad (sun_declin))) - tan (deg2rad (pos_lat)) *
++                                       tan (deg2rad (sun_declin)))); // W2
++    double solar_noon =  (720 - 4 * pos_long - eq_of_time + tz_offset * 60) / 1440; // X2
++    double sunrise_time = solar_noon - ha_sunrise * 4 / 1440; //  Y2
++    double sunset_time = solar_noon + ha_sunrise * 4 / 1440; // Z2
++
++    /* convert to hours */
++    SunriseSunset.setHeight(sunrise_time * 24);
++    SunriseSunset.setWidth(sunset_time * 24);
++    return true;
++}
++
++bool GmHelper::getRtSunriseSunset(QSizeF &location, QSizeF &SunriseSunset)
++{
++    QDateTime rtDate = QDateTime::currentDateTime();
++    //
++    USD_LOG_SHOW_PARAM1(rtDate.offsetFromUtc());
++    getSunriseSunset(rtDate, location, SunriseSunset);
++    USD_LOG_SHOW_PARAM2F(SunriseSunset.width(), SunriseSunset.height());
++
++    return true;
++}
++
++bool GmHelper::getRgbWithTemperature(double temp, ColorRGB &result)
++{
++    bool ret = true;
++    const ColorRGB *pColorRgb = blackbodyDataD65plankian;
++    uint tempQuot = 0;
++    uint tempRem = 0;
++    if (temp < 1000 || temp > 10000) {
++        return false;
++    }
++    tempQuot = (uint) temp / 100;
++    tempRem = (uint) temp % 100;
++    tempQuot -= 10;
++
++    if (!tempRem) {
++        result = pColorRgb[tempQuot];
++        return ret;
++    }
++
++    getRgbInterpolate(pColorRgb[tempQuot], pColorRgb[tempQuot + 1], tempRem / 100.0f, result);
++
++}
++
++void GmHelper::getRgbInterpolate(const ColorRGB &p1, const ColorRGB &p2, double index, ColorRGB &result)
++{
++    result.R =  (1.0 - index) * p1.R + index * p2.R;
++    result.G =  (1.0 - index) * p1.G + index * p2.G;
++    result.B =  (1.0 - index) * p1.B + index * p2.B;
++}
++
++uint GmHelper::getTempInterpolate(const double svalue, const double bvalue, double value)
++{
++
++    USD_CHECK_RETURN((svalue > 0 && svalue <=1.f), 0);
++    USD_CHECK_RETURN((bvalue > 0 && bvalue <=1.f), 0);
++    USD_CHECK_RETURN((value > 0 && value <=1.f), 0);
++
++    return ((value - svalue) / (bvalue - svalue)) * 100;
++}
++
++
++uint GmHelper::getTemperatureWithRgb(const double red, const double green, const double blue)
++{
++    USD_CHECK_RETURN((red >= 0 && red <=1.f), 0);
++    USD_CHECK_RETURN((green >= 0 && green <=1.f), 0);
++    USD_CHECK_RETURN((blue >= 0 && blue <=1.f), 0);
++    uint space = 0;
++    uint temp;
++
++    const ColorRGB *pColorRgb = blackbodyDataD65plankian;
++    uint circleLength = sizeof(blackbodyDataD65plankian) / sizeof(ColorRGB);
++    USD_LOG_SHOW_PARAM1(circleLength);
++    for (int k = 0; k < circleLength; k++) {
++        if (red <= pColorRgb[k].R && green <= pColorRgb[k].G && blue <= pColorRgb[k].B) {
++            USD_LOG(LOG_DEBUG,"%.02f(%.02f),%.02f(%.02f),%.02f(%.02f)",red, pColorRgb[k].R, green, pColorRgb[k].G, blue, pColorRgb[k].B);
++            space = k;
++            break;
++        }
++    }
++
++    if (space == 0) {
++        return COLOR_MIN_TEMPERATURE;
++    }
++
++    temp = 1000 + (space - 1) * 100 + getTempInterpolate(pColorRgb[space-1].B, pColorRgb[space].B, blue);
++    USD_LOG(LOG_DEBUG,"%.2f--%.2f--%.2f=====>%d",red, green, blue, temp);
++    return temp;
++}
++
++void GmHelper::setGammaWithTemp(const uint rtTemp)
++{
++    int size = 0;
++    float gammaRed = 0.f;
++    float gammaGreen = 0.f;
++    float gammaBlue = 0.f;
++
++    float brightness = 1.f;
++
++    XRRCrtcGamma *pCrtcGamma;
++    XRRScreenResources  *pScreenRes;
++    m_temperature = rtTemp;
++
++    if (rtTemp<COLOR_MIN_TEMPERATURE) {
++        return;
++    }
++
++    getRgbWithTemperature(rtTemp, m_colorRGB);
++
++    if (m_pScreenRes==nullptr) {
++         m_pScreenRes = XRRGetScreenResources(QX11Info::display(), QX11Info::appRootWindow());
++    }
++    pScreenRes = m_pScreenRes;
++    for(int k = 0; k < pScreenRes->noutput; k++) {
++        RROutput outputId = pScreenRes->outputs[k];
++        XRROutputInfo	*outputInfo = XRRGetOutputInfo (QX11Info::display(), pScreenRes, outputId);
++        QString outputname = QString::fromLatin1(outputInfo->name);
++        if (outputInfo->connection != RR_Connected) {
++            XRRFreeOutputInfo(outputInfo);
++            for (int var = 0; var < m_outputList.count(); var++) {
++                if (!m_outputList[var].name.compare(outputname,Qt::CaseInsensitive)) {
++                    m_outputList[var].connectState = RR_Disconnected;
++                }
++            }
++            continue;
++        }
++
++        for (int var = 0; var < m_outputList.count(); var++) {
++            if (!m_outputList[var].name.compare(outputname,Qt::CaseInsensitive)) {
++                m_outputList[var].rtTemp = rtTemp;
++                m_outputList[var].lastTemp = rtTemp;
++                m_outputList[var].connectState = RR_Connected;
++                brightness = (m_outputList[var].rtBrightness / 100.0f) * MAX_GAMMA_BRIGHTNESS + MIN_GAMMA_BRIGHTNESS;
++                USD_LOG(LOG_DEBUG,"find:%s set brigntness:%0.4f", m_outputList[var].name.toLatin1().data(), m_outputList[var].rtBrightness);
++                break;
++            } else {
++                USD_LOG(LOG_DEBUG,"skip:%s:%s", outputInfo->name, m_outputList[var].name.toLatin1().data());
++            }
++        }
++
++        size = XRRGetCrtcGammaSize(QX11Info::display(), outputInfo->crtc);
++        if (!size) {
++            USD_LOG(LOG_ERR,"Gamma size is 0.\n");
++            goto FREEOUTPUT;
++        }
++
++        /*
++         * The gamma-correction lookup table managed through XRR[GS]etCrtcGamma
++         * is 2^n in size, where 'n' is the number of significant bits in
++         * the X Color.  Because an X Color is 16 bits, size cannot be larger
++         * than 2^16.
++         */
++        if (size > 65536) {
++            USD_LOG(LOG_ERR,"Gamma correction table is impossibly large.\n");
++            goto FREEOUTPUT;
++        }
++
++        pCrtcGamma = XRRAllocGamma(size);
++        if (!pCrtcGamma) {
++             USD_LOG(LOG_ERR,"Gamma allocation failed.\n");
++            continue;
++        }
++        m_colorRGB.R == m_colorRGB.R ? m_colorRGB.R : 1.0;
++        m_colorRGB.G == m_colorRGB.G ? m_colorRGB.G : 1.0;
++        m_colorRGB.B == m_colorRGB.B ? m_colorRGB.B : 1.0;
++
++        gammaRed = 1 / m_colorRGB.R;
++        gammaGreen = 1 / m_colorRGB.G;
++        gammaBlue = 1 / m_colorRGB.B;
++
++#if 1
++        for (int i = 0; i < size; i++) {\
++            uint value = (i * 0xffff) / (size - 1);
++            pCrtcGamma->red[i] = value * m_colorRGB.R * brightness;
++            pCrtcGamma->green[i]= value * m_colorRGB.G * brightness;
++            pCrtcGamma->blue[i] = value * m_colorRGB.B * brightness;
++        }
++#else
++
++        for (int i = 0; i < size; i++) {
++            if (gammaRed == 1.0 && m_brightness == 1.0) {
++                pCrtcGamma->red[i] = (double)i / (double)(size - 1) * 65535.0;
++            }  else {
++                pCrtcGamma->red[i] = qMin(qPow((double)i/(double)(size - 1),
++                                              gammaRed) * m_brightness,
++                                          1.0) * 65535.0;
++            }
++            
++            if (gammaGreen == 1.0 && m_brightness == 1.0) {
++                pCrtcGamma->green[i] = (double)i / (double)(size - 1) * 65535.0;
++            } else {
++                pCrtcGamma->green[i] = qMin(qPow((double)i/(double)(size - 1),
++                                                gammaGreen) * m_brightness,
++                                            1.0) * 65535.0;
++            }
++            
++            if (gammaBlue == 1.0 && m_brightness == 1.0) {
++                pCrtcGamma->blue[i] = (double)i / (double)(size - 1) * 65535.0;
++            } else {
++                pCrtcGamma->blue[i] = qMin(qPow((double)i/(double)(size - 1),
++                                               gammaBlue) * m_brightness,
++                                           1.0) * 65535.0;
++            }
++        }
++#endif
++        XRRSetCrtcGamma(QX11Info::display(), outputInfo->crtc, pCrtcGamma);
++        XSync(QX11Info::display(), NULL);
++        USD_LOG(LOG_DEBUG," %s color temp(%d) set ok r:%.4f,g:%.4f,b:%.4f,(bright):%0.4f", outputInfo->name, m_temperature,m_colorRGB.R,m_colorRGB.G,m_colorRGB.B,brightness);
++        XRRFreeGamma(pCrtcGamma);
++FREEOUTPUT:
++         XRRFreeOutputInfo(outputInfo);
++    }
++
++}
++
++void GmHelper::freeScreenResource()
++{
++    if (m_pScreenRes != nullptr) {
++        XRRFreeScreenResources(m_pScreenRes);
++        m_pScreenRes = nullptr;
++    }
++}
++
++void GmHelper::setAllOutputsBrightness(const uint brightness)
++{
++    for (int var = 0; var < m_outputList.count(); ++var) {
++        m_outputList[var].rtBrightness = brightness;
++    }
++    USD_LOG(LOG_DEBUG, "m_brightness:%d",m_brightness);
++}
++
++void GmHelper::setBrightness(const QString outputName, const double brightness)
++{
++    for (int var = 0; var < m_outputList.count(); ++var) {
++        if (!m_outputList[var].name.compare(outputName,Qt::CaseInsensitive) || !outputName.compare("all",Qt::CaseInsensitive) ) {
++            m_outputList[var].targetBrightness = brightness;
++        }
++    }
++}
++
++QList<OutputInfo> GmHelper::initOutput()
++{
++    if (m_pScreenRes==nullptr) {
++         m_pScreenRes = XRRGetScreenResources(QX11Info::display(), QX11Info::appRootWindow());
++    }
++
++    for(int k = 0; k < m_pScreenRes->noutput; k++) {
++        OutputInfo info;
++        XRROutputInfo	*outputInfo = XRRGetOutputInfo (QX11Info::display(), m_pScreenRes, m_pScreenRes->outputs[k]);
++        info.name = QString::fromLatin1(outputInfo->name);
++        info.targetBrightness = 100;
++        info.rtBrightness = 100;
++        info.lastBrightness = 100;
++        info.connectState = outputInfo->connection;
++        info.lastTemp =  info.rtTemp =  info.targetTemp = COLOR_TEMPERATURE_DEFAULT;
++        XRRFreeOutputInfo(outputInfo);
++        m_outputList.append(info);
++    }
++    return m_outputList;
++}
++
++OutputGammaInfoList GmHelper::getAllOutputsInfo()
++{
++    OutputGammaInfoList outputGamaInfoList;
++    for (int var = 0; var < m_outputList.count(); var++) {
++        OutputGammaInfo outputGamaInfo;
++
++    }
++
++    for(int k = 0; k < m_pScreenRes->noutput; k++) {
++        OutputGammaInfo outputGamaInfo;
++        RROutput outputId = m_pScreenRes->outputs[k];
++        XRROutputInfo	*outputInfo = XRRGetOutputInfo (QX11Info::display(), m_pScreenRes, outputId);
++        if (outputInfo->connection != RR_Connected) {
++            goto FREEOUPUT;
++            continue;
++        }
++        for (int var = 0; var < m_outputList.count(); var++) {
++            if (!m_outputList[var].name.compare(QString::fromLatin1(outputInfo->name),Qt::CaseInsensitive)) {
++                outputGamaInfo.OutputName = m_outputList[var].name;
++                outputGamaInfo.Gamma = getTemperatureWithRgb(m_colorRGB.R, m_colorRGB.G, m_colorRGB.B);
++                outputGamaInfo.Temperature = m_temperature;
++                outputGamaInfo.Brignthess = m_outputList[var].rtBrightness;
++                outputGamaInfoList.append(std::move(outputGamaInfo));
++            }
++        }
++FREEOUPUT:
++        XRRFreeOutputInfo(outputInfo);
++    }
++    return outputGamaInfoList;
++}
++
++QList<OutputInfo>& GmHelper::getOutputInfo()
++{
++    return m_outputList;
++}
++//rgb 会修正亮度。所以，需要记录亮度值，然后根据亮度值回调出正常的色温再带入重新进行计算。
++#if 0
++OutputGammaInfoList GmHelper::getAllOutputGammaInfo()
++{
++    double i1, v1, i2, v2;
++    int size, middle, lastBest, lastRed, lastGreen, lastBlue;
++    float red = 0;
++    float green = 0;
++    float blue = 0;
++
++    float brightness = 0;
++    unsigned short  *bestArray;
++    XRRCrtcGamma *pCrtcGamma;
++    XRRScreenResources  *pScreenRes;
++    OutputGammaInfoList outputGamaInfoList;
++//    pScreenRes = XRRGetScreenResources(QX11Info::display(), QX11Info::appRootWindow());
++
++    for(int k = 0; k < m_pScreenRes->noutput; k++) {
++        ColorRGB colorRgb;
++        OutputGammaInfo outputGamaInfo;
++        RROutput outputId = m_pScreenRes->outputs[k];
++        XRROutputInfo	*outputInfo = XRRGetOutputInfo (QX11Info::display(), m_pScreenRes, outputId);
++        if (outputInfo->connection != RR_Connected) {
++            XRRFreeOutputInfo(outputInfo);
++            continue;
++        }
++
++        size = XRRGetCrtcGammaSize(QX11Info::display(), outputInfo->crtc);
++        if (!size) {
++            USD_LOG(LOG_ERR, "size get error");
++            goto FREEOUTPUT;;
++        }
++        pCrtcGamma = XRRGetCrtcGamma(QX11Info::display(), outputInfo->crtc);
++        if (!pCrtcGamma) {
++            USD_LOG(LOG_ERR, "CrtcGamma get error");
++            goto FREEOUTPUT;;
++        }
++
++        /*
++         * The gamma-correction lookup table managed through XRR[GS]etCrtcGamma
++         * is 2^n in size, where 'n' is the number of significant bits in
++         * the X Color.  Because an X Color is 16 bits, size cannot be larger
++         * than 2^16.
++         */
++        if (size > 65536) {
++            USD_LOG(LOG_ERR, "size get error");
++            goto FREEOUTPUT;;
++        }
++        lastRed = find_last_non_clamped(pCrtcGamma->red, size);
++        lastBlue = find_last_non_clamped(pCrtcGamma->blue, size);
++        lastGreen = find_last_non_clamped(pCrtcGamma->green, size);
++        USD_LOG_SHOW_PARAM1(lastRed);
++        USD_LOG_SHOW_PARAM1(lastBlue);
++        USD_LOG_SHOW_PARAM1(lastGreen);
++        bestArray = pCrtcGamma->red;
++        lastBest = lastRed;
++
++        if (lastGreen > lastBest) {
++            lastBest = lastGreen;
++            bestArray = pCrtcGamma->green;
++        }
++
++        if (lastBlue > lastBest) {
++            lastBest = lastBlue;
++            bestArray = pCrtcGamma->blue;
++        }
++
++        if (lastBest == 0) {
++            lastBest == 1;
++        }
++
++        middle = lastBest / 2;
++        i1 = (double)(middle + 1) / size;
++        v1 = (double)(bestArray[middle]) / 65535;
++        i2 = (double)(lastBest + 1) / size;
++        v2 = (double)(bestArray[lastBest]) / 65535;
++        USD_LOG_SHOW_PARAM1(lastBest);
++        USD_LOG_SHOW_PARAM1(v2);
++        if (v2 < 0.0001) {
++            USD_LOG(LOG_ERR, "size get error");
++            goto FREEOUTPUT;
++        } else if ((lastBest + 1) == size) {
++            brightness = v2;
++        } else {
++            brightness = exp((log(v2)*log(i1) - log(v1)*log(i2))/log(i1/i2));
++        }
++
++        brightness = 1;
++        red = log((double)(pCrtcGamma->red[lastRed / 2]) / brightness
++                / 65535) / log((double)((lastRed / 2) + 1) / size);
++        green =  log((double)(pCrtcGamma->green[lastGreen / 2]) / brightness
++                / 65535) / log((double)((lastGreen / 2) + 1) / size);
++        blue = log((double)(pCrtcGamma->blue[lastBlue / 2]) / brightness
++                / 65535) / log((double)((lastBlue / 2) + 1) / size);
++
++        colorRgb.R = red == 0 ? 0 : 1/red;
++        colorRgb.G = green == 0 ? 0 : 1/green;
++        colorRgb.B = blue == 0 ? 0 : 1/blue;
++        USD_LOG(LOG_DEBUG,"[%s] r:%.2f,g:%.2f,b:%.2f brightness:%.2f", outputInfo->name, colorRgb.R, colorRgb.G, colorRgb.B, brightness);
++        outputGamaInfo.OutputName = QString::fromLatin1(outputInfo->name);
++        outputGamaInfo.Gamma = getTemperatureWithRgb(colorRgb.R, colorRgb.G, colorRgb.B);
++        outputGamaInfoList.append(std::move(outputGamaInfo));
++
++FREEOUTPUT:
++        XRRFreeGamma(pCrtcGamma);
++        XRRFreeOutputInfo(outputInfo);
++    }
++    return outputGamaInfoList;
++}
++#endif
++
++double GmHelper::deg2rad(double degrees)
++{
++     return (M_PI * degrees) / 180.f;
++}
++
++double GmHelper::rad2deg(double radians)
++{
++  return radians * (180.f / M_PI);
++}
++
++
++
+diff --git a/plugins/gamma-manager/gamma-manager-helper.h b/plugins/gamma-manager/gamma-manager-helper.h
+new file mode 100644
+index 0000000..fd76184
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-helper.h
+@@ -0,0 +1,202 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef GAMMAMANAGERHELPER_H
++#define GAMMAMANAGERHELPER_H
++
++#include <QTime>
++
++#include <QtMath>
++#include <QDebug>
++#include <QSizeF>
++#include <QString>
++#include <QX11Info>
++#include <QObject>
++#include <QDateTime>
++#include <QJsonArray>
++#include <QJsonObject>
++#include <QJsonDocument>
++
++#include "clib-syslog.h"
++#include "gamma-manager-define.h"
++#include "gamma-manager-adaptor.h"
++#include "rgb-gamma-table.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++#include <math.h>
++#include <X11/extensions/Xrandr.h>
++#include <X11/Xatom.h>
++#ifdef __cplusplus
++}
++#endif
++
++typedef struct _OutputInfo{
++    QString name;
++    bool connectState;
++    uint targetTemp;
++    uint lastTemp;
++    uint rtTemp;
++    double targetBrightness;
++    double lastBrightness;
++    double rtBrightness;
++}OutputInfo;
++
++class GmHelper: public QObject
++{
++    Q_OBJECT
++public:
++    GmHelper(QObject *parent = nullptr);
++    ~GmHelper();
++
++    /**
++     * @brief getLonAndLatByJson 根据服务器地址，提取经纬度信息
++     * @param url
++     * @param bytes
++     * @param psize
++     * @return
++     */
++    bool getLonAndLatByJson(QString url, QByteArray bytes, QSizeF& psize);
++
++    /**
++     * @brief getSunriseSunset 计算指定日期日出日落
++     * @param rtDate
++     * @param location
++     * @param SunriseSunset
++     * @return
++     */
++    bool getSunriseSunset(QDateTime &rtDate,QSizeF &location, QSizeF &SunriseSunset);
++
++    /**
++     * @brief getRtSunriseSunset 计算当前日期的日出日落
++     * @param location
++     * @param SunriseSunset
++     * @return
++     */
++    bool getRtSunriseSunset(QSizeF &location, QSizeF &SunriseSunset);
++
++    /**
++     * @brief getRgbWithTemperature 色温值转化gamma所需的RGB
++     * @param temp
++     * @param result
++     * @return
++     */
++    bool getRgbWithTemperature(double temp, ColorRGB &result);
++
++
++    /**
++     * @brief getTempInterpolate
++     * @param svalue
++     * @param bvalue
++     * @param value
++     * @return
++     */
++    uint getTempInterpolate(const double svalue, const double bvalue, double value);
++
++    /**
++     * @brief getTemperatureWithRgb
++     * @param red
++     * @param green
++     * @param blue
++     * @return
++     */
++    uint getTemperatureWithRgb(const double red, const double green, const double blue);
++
++    /**
++     * @brief setAllOutputsBrightness
++     * @param brightness
++     */
++    void setAllOutputsBrightness(const uint brightness);
++
++    /**
++     * @brief setBrightness
++     * @param outputName
++     * @param brightness
++     */
++    void setBrightness(const QString outputName, const double brightness);
++
++    /**
++     * @brief getAllOutputsInfo
++     * @return
++     */
++    OutputGammaInfoList getAllOutputsInfo();
++
++    /**
++     * @brief getOutputInfo 为设置单个屏幕的亮度，外部方法先获取outputinfo，然后逐个显示设置targetVaue，并根据target与运行次数设置rtvalue
++     * @return
++     */
++    QList<OutputInfo>& getOutputInfo();
++
++    /**
++     * @brief setTemperature 设置gamma，便利outputinfo的rtvalue与
++     * @param temp
++     */
++    void setGammaWithTemp(const uint rtTemp);
++
++    /**
++     * @brief freeScreenResource
++     */
++    void freeScreenResource();
++private:
++
++    /**
++     * @brief initOutput
++     * @return
++     */
++    QList<OutputInfo> initOutput();
++
++    /**
++     * @brief getRgbInterpolate
++     * @param p1
++     * @param p2
++     * @param index
++     * @param result
++     */
++    void getRgbInterpolate(const ColorRGB &p1, const ColorRGB &p2, double index, ColorRGB &result);
++
++    /**
++     * @brief getLonAndLatMozilla
++     * @param jsonBytes
++     * @param psize
++     * @return
++     * //{"location": {"lat": 39.9075, "lng": 116.3972}, "accuracy": 49000.0}
++     */
++    bool getLonAndLatMozilla(QByteArray jsonBytes, QSizeF& psize);
++
++     /**
++     * @brief getLonAndLatIPAPI
++     * @param jsonBytes
++     * @param psize
++     * @return
++     *  //{"status":"success","country":"China","countryCode":"CN","region":"TJ","regionName":"Tianjin","city":"Tianjin","zip":"","lat":39.3434,"lon":117.362,"timezone":"Asia/Shanghai","isp":"ASN for TIANJIN Provincial Net of CT","org":"Chinanet TJ","as":"AS17638 ASN for TIANJIN Provincial Net of CT","query":"123.150.8.42"}
++     */
++    bool getLonAndLatIPAPI(QByteArray jsonBytes, QSizeF& psize);
++private:
++    double deg2rad (double degrees);
++    double  rad2deg (double radians);
++
++    XRRScreenResources  *m_pScreenRes = nullptr;
++    QList<OutputInfo> m_outputList;
++    uint m_brightness;
++    uint m_temperature;
++    ColorRGB m_colorRGB;
++};
++
++#endif // GAMMAMANAGERHELPER_H
+diff --git a/plugins/gamma-manager/gamma-manager-location.cpp b/plugins/gamma-manager/gamma-manager-location.cpp
+new file mode 100644
+index 0000000..a4199ff
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-location.cpp
+@@ -0,0 +1,201 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "gamma-manager-location.h"
++
++/*
++ *
++ *
++*/
++GmLocation::GmLocation(QObject *parent):
++    m_pTimer(nullptr),
++    m_urlChangeTimes(0),
++    m_NAM(nullptr),
++    m_pGmHelper(nullptr)
++{
++    m_urlList.append(IP_API_ADDRESS);
++    m_urlList.append(IP_API_ADDRESS_BACKUP);
++    m_pTimer = new QTimer(this);
++    m_pGmHelper = new GmHelper(this);
++#ifdef TEST_HTTP
++    m_pPingPongTest = new PingPongTest(this);
++    m_pPingPongTest->setTestUrlList(m_urlList);
++#endif
++}
++
++GmLocation::~GmLocation()
++{
++
++}
++
++void GmLocation::start()
++{
++#ifdef TEST_HTTP
++    m_pPingPongTest = new PingPongTest(this);
++    m_pPingPongTest->setTestUrlList(m_urlList);
++    m_pPingPongTest->start();
++#else
++    m_initState = false;
++    connect(m_pTimer, SIGNAL(timeout()) ,this, SLOT(doNetWorkInterfaceTimeOut()), Qt::DirectConnection);
++    m_pTimer->start(1000);
++#endif
++}
++
++void GmLocation::setIpAddresses(QStringList &addresses)
++{
++    m_urlChangeTimes = 0;
++    m_urlList = addresses;
++    m_pTimer->deleteLater();
++}
++
++void GmLocation::setGsettings(QGSettings *settings)
++{
++    m_pSettings = settings;
++}
++
++void GmLocation::doNetWorkInterfaceTimeOut()
++{
++    USD_LOG(LOG_DEBUG,"check..network connect");
++    m_pNetworkBus = new QDBusInterface("org.freedesktop.NetworkManager", \
++                                       "/org/freedesktop/NetworkManager", \
++                                       "org.freedesktop.NetworkManager", \
++                                       QDBusConnection::systemBus(),this);
++    if (m_pNetworkBus) {
++        m_initState = true;
++        m_pTimer->stop();
++        disconnect(m_pTimer, SIGNAL(timeout()) ,this, SLOT(doNetWorkInterfaceTimeOut()));
++        if (m_pNetworkBus->property("State").toInt() == 70) {
++            USD_LOG(LOG_DEBUG,"network connect success");
++            m_pTimer->setSingleShot(false);
++            connect(m_pTimer, SIGNAL(timeout()) ,this, SLOT(getLocationByHttp()), Qt::DirectConnection);
++            m_pTimer->start(1000);
++        } else {
++            m_pTimer->stop();
++            connect(m_pTimer, SIGNAL(timeout()) ,this, SLOT(getLocationByHttp()), Qt::DirectConnection);
++            connect(m_pNetworkBus, SIGNAL(StateChanged(uint)), this, SLOT(doNetworkStateCanged(uint)), Qt::DirectConnection);
++        }
++    }
++}
++
++void GmLocation::doNetworkStateCanged(uint state)
++{
++    if (m_lastNetworkState != state && state == 70) {//网络首次链接
++        USD_LOG(LOG_DAEMON,"network had ready");
++        m_lastNetworkState = state;
++        m_pTimer->start(1000);
++    } else if(m_lastNetworkState == 70 && state != 70) {//断开链接
++        m_pTimer->stop();
++    }
++
++}
++
++void GmLocation::doNAMFinished(QNetworkReply *reply)
++{
++    static int retryTimes = 0;
++    USD_LOG(LOG_DEBUG, "get location already..");
++    QTime stopTime = QTime::currentTime();
++    QVariant statusCodeV =
++            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
++    // Or the target URL if it was a redirect:
++    QVariant redirectionTargetUrl =
++            reply->attribute(QNetworkRequest::RedirectionTargetAttribute);
++
++
++    // no error received?
++    if (reply->error() == QNetworkReply::NoError) {
++        QByteArray bytes = reply->readAll();  // bytes
++        QString msg = QString::fromUtf8(bytes);
++
++        if (m_pGmHelper->getLonAndLatByJson(m_urlList[m_urlChangeTimes], bytes, m_location)) {
++            m_pTimer->stop();
++            retryTimes = 0;
++
++            setLocation(m_location.width(),m_location.height());
++            disconnect(m_pNetworkBus, SIGNAL(StateChanged(uint)), this, SLOT(doNetworkStateCanged(uint)));//只要同步一次信息即可
++            USD_LOG(LOG_DEBUG,"location(%0.4f,%0.4f)",m_location.width(), m_location.height());
++
++            return;
++        } else{
++            m_pTimer->start(1000);
++        }
++
++        USD_LOG(LOG_DEBUG,"elpased:%d:%s @%d", m_connectTime.msecsTo(stopTime), msg.toLatin1().data(),retryTimes);
++    }  else {
++        m_pTimer->start(1000);
++        USD_LOG(LOG_DEBUG,"%s %d elpased:%d error!%d",m_connectTime.msecsTo(stopTime),reply->error());
++    }
++
++    if (retryTimes++ > 10) {//
++        retryTimes = 0;
++        m_urlChangeTimes++;
++    }
++}
++
++void GmLocation::getLocationByHttp()
++{
++    QUrl url;
++
++    m_pTimer->stop();
++    if (m_urlChangeTimes >= m_urlList.count()) {
++        m_urlChangeTimes = 0;
++    }
++
++    if(m_NAM == nullptr) {
++       m_NAM = new QNetworkAccessManager(this);
++       connect(m_NAM, SIGNAL(finished(QNetworkReply*)),this, SLOT(doNAMFinished(QNetworkReply*)));
++    }
++
++    url.setUrl(m_urlList[m_urlChangeTimes]);
++    m_NAM->get(QNetworkRequest(url));
++    USD_LOG(LOG_DEBUG, "ready get location..:%d", m_urlChangeTimes);
++    m_connectTime = QTime::currentTime();
++}
++
++void GmLocation::TestPingPongBall(QStringList ppbUrl)
++{
++    QUrl url;
++    if(m_NAM == nullptr) {
++       m_NAM = new QNetworkAccessManager(this);
++
++    }
++
++    url.setUrl(m_urlList[m_urlChangeTimes]);
++    m_NAM->get(QNetworkRequest(url));
++}
++
++void GmLocation::setLocation(double lon, double lat)
++{
++    QVariant qVar;
++    QVariantList qvarList;
++    QSizeF sunTime;
++    QSizeF location;
++
++    location.setWidth(lon);
++    location.setHeight(lat);
++
++    qvarList.append(lon);
++    qvarList.append(lat);
++    qVar = qvarList;
++
++    if (m_pSettings) {
++        m_pGmHelper->getRtSunriseSunset(location, sunTime);
++        m_pSettings->set(COLOR_KEY_LAST_COORDINATES, qVar);
++        m_pSettings->set(COLOR_KEY_AUTOMATIC_FROM, sunTime.width());
++        m_pSettings->set(COLOR_KEY_AUTOMATIC_TO, sunTime.height());
++    }
++}
+diff --git a/plugins/gamma-manager/gamma-manager-location.h b/plugins/gamma-manager/gamma-manager-location.h
+new file mode 100644
+index 0000000..fca6ead
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-location.h
+@@ -0,0 +1,106 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef GAMMAMANAGERLOCATION_H
++#define GAMMAMANAGERLOCATION_H
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QDBusInterface>
++#include <QObject>
++#include <QTimer>
++
++#include "clib-syslog.h"
++#include "gamma-manager-define.h"
++#include "QGSettings/qgsettings.h"
++#include "gamma-manager-helper.h"
++#include "pingpongtest.h"
++
++class GmLocation:public QObject
++{
++    Q_OBJECT
++public:
++    GmLocation(QObject *parent = nullptr);
++    ~GmLocation();
++    /**
++     * @brief start
++     */
++    void start();
++
++    /**
++     * @brief setIpAddresses
++     * @param addresses
++     */
++    void setIpAddresses(QStringList &addresses);//for unit test
++
++    /**
++     * @brief setGsettings 同步gsettings
++     * @param settings
++     */
++    void setGsettings(QGSettings *settings);
++public Q_SLOTS:
++   /* 初始化目前只有网络接口初始化的监控，如果该接口初始化失败，下个timeout继续初始化。
++      如果初始化成功，则链接信号，继续工作。
++    */
++    /**
++     * @brief doNetWorkInterfaceTimeOut
++     */
++    void doNetWorkInterfaceTimeOut();
++
++    /**
++     * @brief doNetworkStateCanged
++     * @param state
++     */
++    void doNetworkStateCanged(uint state);
++
++    /**
++     * @brief doNAMFinished
++     * @param reply
++     */
++    void doNAMFinished(QNetworkReply *reply);
++
++    /**
++     * @brief getLocationByHttp
++     */
++    void getLocationByHttp();
++
++    /**
++     * @brief TestPingPongBall
++     * @param url
++     */
++    void TestPingPongBall(QStringList url);
++private:
++    void setLocation(double lon, double lat);
++private:
++    bool                     m_initState;
++    int                      m_lastNetworkState;
++    int                      m_urlChangeTimes;
++
++    QTime                    m_connectTime;
++    QSizeF                   m_location;
++    QStringList              m_urlList;
++
++    QTimer                  *m_pTimer;
++    QDBusInterface          *m_pNetworkBus;
++    QNetworkAccessManager   *m_NAM;
++    GmHelper                *m_pGmHelper;
++    QGSettings              *m_pSettings;
++    PingPongTest            *m_pPingPongTest;
++};
++
++#endif // GAMMAMANAGERLOCATION_H
+diff --git a/plugins/gamma-manager/gamma-manager-plugin.cpp b/plugins/gamma-manager/gamma-manager-plugin.cpp
+new file mode 100644
+index 0000000..c97654e
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-plugin.cpp
+@@ -0,0 +1,64 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "gamma-manager-plugin.h"
++
++PluginInterface *GammaManagerPlugin::m_Instance = nullptr;
++ManagerInterface *GammaManagerPlugin::m_pManager = nullptr;
++
++
++GammaManagerPlugin::GammaManagerPlugin()
++{
++    USD_LOG(LOG_DEBUG,"initializing");
++    if (UsdBaseClass::isWayland() && nullptr == m_pManager) {
++        m_pManager = GammaManagerWayland::GammaManagerWaylandNew();
++    } else if(nullptr == m_pManager) {
++        m_pManager = GammaManager::GammaManagerNew();
++    }
++}
++
++GammaManagerPlugin::~GammaManagerPlugin()
++{
++    if (m_pManager != nullptr) {
++        delete m_pManager;
++    }
++}
++
++void GammaManagerPlugin::activate()
++{
++    m_pManager->Start();
++}
++
++void GammaManagerPlugin::deactivate()
++{
++    m_pManager->Stop();
++}
++
++PluginInterface *GammaManagerPlugin::getInstance()
++{
++    if (nullptr == m_Instance){
++        m_Instance = new GammaManagerPlugin();
++    }
++    return m_Instance;
++}
++
++
++PluginInterface *createSettingsPlugin()
++{
++    return GammaManagerPlugin::getInstance();
++}
+diff --git a/plugins/gamma-manager/gamma-manager-plugin.h b/plugins/gamma-manager/gamma-manager-plugin.h
+new file mode 100644
+index 0000000..2c81bd0
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-plugin.h
+@@ -0,0 +1,44 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef DEMOPLUGIN_H
++#define DEMOPLUGIN_H
++#include <QtCore/QtGlobal>
++#include "gamma-manager.h"
++#include "gamma-manager-wayland.h"
++#include "plugin-interface.h"
++
++class  GammaManagerPlugin: public PluginInterface
++{
++public:
++    ~GammaManagerPlugin();
++    static PluginInterface *getInstance();
++    virtual void activate();
++    virtual void deactivate();
++
++private:
++    GammaManagerPlugin();
++    GammaManagerPlugin(GammaManagerPlugin&)=delete;
++
++    static ManagerInterface *m_pManager;
++//    static GammaManagerWayland *m_gammaManagerWayland;
++    static PluginInterface *m_Instance;
++};
++extern "C" Q_DECL_EXPORT PluginInterface* createSettingsPlugin();
++#endif // DEMOPLUGIN_H
+diff --git a/plugins/gamma-manager/gamma-manager-thread.cpp b/plugins/gamma-manager/gamma-manager-thread.cpp
+new file mode 100644
+index 0000000..3eb2ce4
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-thread.cpp
+@@ -0,0 +1,185 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "gamma-manager-thread.h"
++
++GmWorkThread::GmWorkThread(QObject *parent)
++{
++    m_rtTemperature = COLOR_TEMPERATURE_DEFAULT;
++    m_lastTemperature = COLOR_TEMPERATURE_DEFAULT;
++    m_targetTemp = COLOR_TEMPERATURE_DEFAULT;
++    m_pSetTimer = new QTimer(this);
++    m_pGmHelper = new GmHelper(this);
++#if 0
++    m_pSetTimer->setSingleShot(false);
++    m_pSetTimer->setTimerType(Qt::PreciseTimer);
++    connect(m_pSetTimer, SIGNAL(timeout()), this, SLOT(doSetTimer()), Qt::QueuedConnection);
++#endif
++
++    QDBusConnection::sessionBus().connect(QString(),
++                                          QString(DBUS_XRANDR_PATH),
++                                          DBUS_XRANDR_INTERFACE,
++                                          "screenAdded", this, SLOT(doAddedScreen(QString)));
++
++    QDBusConnection::sessionBus().connect(QString(),
++                                          QString(DBUS_XRANDR_PATH),
++                                          DBUS_XRANDR_INTERFACE,
++                                          "screenRemoved", this, SLOT(doRemovedScreen(QString)));
++
++    QDBusConnection::sessionBus().connect(QString(),
++                                          QString(DBUS_XRANDR_PATH),
++                                          DBUS_XRANDR_INTERFACE,
++                                          "screenStateChanged", this, SLOT(doScreenStateChanged(QString,int)));
++}
++
++GmWorkThread::~GmWorkThread()
++{
++    if (m_pSetTimer) {
++        delete m_pSetTimer;
++        m_pSetTimer = nullptr;
++    }
++}
++
++void GmWorkThread::setAllOutputsBrightness(const double brightness)
++{
++    m_pGmHelper->setAllOutputsBrightness(brightness);
++    USD_LOG(LOG_DEBUG,"update brightness...:%d",brightness);
++}
++
++void GmWorkThread::setBrightness(const QString outputName, const double brightness)
++{
++    m_pGmHelper->setBrightness(outputName, brightness);
++}
++
++double GmWorkThread::getBrightness()
++{
++    return 0;
++}
++
++void GmWorkThread::setTemperature(const int temperature)
++{
++    m_targetTemp = temperature;
++    USD_LOG(LOG_DEBUG, "update setTemperature...:%d", m_targetTemp);
++}
++
++int GmWorkThread::getTemperature()
++{
++    return m_targetTemp;
++}
++
++void GmWorkThread::stopWork()
++{
++    isExit = true;
++}
++
++OutputGammaInfoList GmWorkThread::getAllOutputGammaInfo()
++{
++   return m_pGmHelper->getAllOutputsInfo();
++}
++
++void GmWorkThread::run()
++{
++    double frac;
++    int brightSetCount = 0;
++    int tempSetCount = 0;
++    static int runTimes = 0;
++    runTimes = 0;
++    QList<OutputInfo>& outputList = m_pGmHelper->getOutputInfo();
++
++    for (int var = 0; var < outputList.count(); var++) {
++        if (outputList[var].rtBrightness == outputList[var].targetBrightness) {
++            brightSetCount++;
++        }
++    }
++
++    do {
++        tempSetCount = 0;
++        if (isExit){
++            break;
++        }
++        QTime timerStart = QTime::currentTime();
++        frac = (runTimes * 50.f) / (1000.f*USD_NIGHT_LIGHT_SMOOTH_SMEAR);//调整值从大逐步变小以达到渐变效果。
++        if (qAbs(m_rtTemperature - m_targetTemp) < 10.f) {
++            m_rtTemperature = m_targetTemp;
++        } else {
++            m_rtTemperature = (m_targetTemp - m_lastTemperature) * frac + m_lastTemperature;
++        }
++
++        if (m_rtTemperature < 0) {
++            USD_LOG(LOG_DEBUG,"had bug reset %d-->%d", m_rtTemperature, m_targetTemp);
++            m_rtTemperature = m_targetTemp;
++        }
++
++        for (int var = 0; var < outputList.count(); var++) {
++            if (qAbs(outputList[var].rtBrightness - outputList[var].targetBrightness) < 3 && outputList[var].rtBrightness != outputList[var].targetBrightness) {
++                outputList[var].rtBrightness = outputList[var].targetBrightness;
++                outputList[var].lastBrightness = outputList[var].rtBrightness;
++                brightSetCount++;
++            } else {
++                outputList[var].rtBrightness = (outputList[var].targetBrightness - outputList[var].lastBrightness) * (frac*2) + outputList[var].lastBrightness;
++                outputList[var].lastBrightness = outputList[var].rtBrightness;
++                USD_LOG(LOG_DEBUG,"%s ---> %0.4f ---> %0.4f",outputList[var].name.toLatin1().data(), outputList[var].rtBrightness, outputList[var].targetBrightness);
++            }
++
++            if(outputList[var].rtTemp == m_targetTemp || outputList[var].connectState != RR_Connected) {
++                tempSetCount++;
++            }
++        }
++
++        m_pGmHelper->setGammaWithTemp(m_rtTemperature);
++        m_lastTemperature = m_rtTemperature;
++        runTimes++;
++        USD_LOG(LOG_DEBUG,"cost time:%d rtTemperature:%d:,runtime:%d,",timerStart.msecsTo(QTime::currentTime()), m_rtTemperature, runTimes);
++        USD_LOG_SHOW_PARAM2(brightSetCount, outputList.count());
++        msleep(20);
++    } while (m_targetTemp != m_rtTemperature || brightSetCount != outputList.count() || tempSetCount != outputList.count());
++}
++
++void GmWorkThread::doAddedScreen(QString outputName)
++{
++    USD_LOG(LOG_DEBUG,"output:%s added", outputName.toLatin1().data());
++}
++
++void GmWorkThread::doRemovedScreen(QString outputName)
++{
++    USD_LOG(LOG_DEBUG,"output:%s removed", outputName.toLatin1().data());
++}
++
++
++/**
++ * @brief GmWorkThread::doScreenStateChanged
++ * @param outputName
++ * @param state
++ *
++ */
++void GmWorkThread::doScreenStateChanged(QString outputName, int state)
++{
++    QList<OutputInfo>& outputList = m_pGmHelper->getOutputInfo();
++    for (int var = 0; var < outputList.count(); var++) {
++        if (!outputList[var].name.compare(outputName,Qt::CaseInsensitive)) {
++            if (state) {//just set gamma when output enable.
++                outputList[var].targetTemp = m_targetTemp;
++//                outputList[var].rtTemp = COLOR_TEMPERATURE_DEFAULT;
++//                outputList[var].lastTemp = COLOR_TEMPERATURE_DEFAULT;
++                this->run();
++            }
++        }
++    }
++    USD_LOG(LOG_DEBUG,"output:%s state:%d", outputName.toLatin1().data(), state);
++}
++
+diff --git a/plugins/gamma-manager/gamma-manager-thread.h b/plugins/gamma-manager/gamma-manager-thread.h
+new file mode 100644
+index 0000000..b69dacc
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-thread.h
+@@ -0,0 +1,110 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef GAMMAMANANGERTHREAD_H
++#define GAMMAMANANGERTHREAD_H
++#include <QThread>
++#include <QMutex>
++#include <QX11Info>
++#include "gamma-manager-define.h"
++#include "gamma-manager-adaptor.h"
++#include "gamma-manager-helper.h"
++
++
++
++class GmWorkThread: public QThread
++{
++    Q_OBJECT
++public:
++    GmWorkThread(QObject *parent = nullptr);
++    ~GmWorkThread();
++    /**
++     * @brief setAllOutputsBrightness
++     * @param brightness
++     */
++    void setAllOutputsBrightness(const double brightness);
++
++    /**
++     * @brief setBrightness
++     * @param outputName
++     * @param brightness
++     */
++    void setBrightness(const QString outputName, const double brightness);
++
++    /**
++     * @brief getBrightness
++     * @return
++     */
++    double getBrightness();
++
++    /**
++     * @brief setTemperature
++     * @param temperature
++     */
++    void setTemperature(const int temperature);
++
++    /**
++     * @brief getTemperature
++     * @return
++     */
++    int getTemperature();
++
++    /**
++     * @brief stopWork
++     */
++    void stopWork();
++
++    /**
++     * @brief getAllOutputGammaInfo
++     * @return
++     */
++    OutputGammaInfoList getAllOutputGammaInfo();
++private Q_SLOTS:
++    /**
++     * @brief doAddedScreen
++     * @param outputName
++     */
++    void doAddedScreen(QString outputName);
++
++    /**
++     * @brief doRemovedScreen
++     * @param outputName
++     */
++    void doRemovedScreen(QString outputName);
++
++    /**
++     * @brief doScreenStateChanged
++     * @param outputName
++     * @param state
++     */
++    void doScreenStateChanged(QString outputName, int state);
++protected:
++    void run();
++
++private:
++    bool isExit = false;
++    int m_targetTemp;
++    int m_lastTemperature;
++    int m_rtTemperature;
++
++    QTimer *m_pSetTimer;
++    GmHelper *m_pGmHelper;
++};
++
++#endif // GAMMAMANANGERTHREAD_H
+diff --git a/plugins/gamma-manager/gamma-manager-wayland.cpp b/plugins/gamma-manager/gamma-manager-wayland.cpp
+new file mode 100644
+index 0000000..6454f9a
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-wayland.cpp
+@@ -0,0 +1,343 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "gamma-manager-wayland.h"
++#include "gamma-color-info.h"
++GammaManagerWayland *GammaManagerWayland::m_gammaWaylandManager = nullptr;
++
++//struct ColorInfoWayland {
++//    QString arg;
++//    QDBusVariant out;
++//};
++
++//QDBusArgument &operator<<(QDBusArgument &argument, const ColorInfoWayland &mystruct)
++//{
++//    argument.beginStructure();
++//    argument << mystruct.arg << mystruct.out;
++//    argument.endStructure();
++//    return argument;
++//}
++
++//const QDBusArgument &operator>>(const QDBusArgument &argument, ColorInfoWayland &mystruct)
++//{
++//    argument.beginStructure();
++//    argument >> mystruct.arg >> mystruct.out;
++//    argument.endStructure();
++//    return argument;
++//}
++
++//Q_DECLARE_METATYPE(ColorInfoWayland)
++
++/*
++ * TODO:kwin使用的时天黑时间，而非日落时间。日落时间一般比天黑时间早半小时，需要提取kwin的算法
++ *
++*/
++GammaManagerWayland::GammaManagerWayland()
++{
++    m_pColorSettings = new QGSettings(USD_COLOR_SCHEMA);
++    m_pQtSettings    = new QGSettings(QT_THEME_SCHEMA);
++    m_pGtkSettings   = new QGSettings(GTK_THEME_SCHEMA);
++    m_pukuiGtkConfig = new UkuiGtkConfig(this);
++    m_darkModeChangedBySelf = false;
++
++    connect(m_pQtSettings, SIGNAL(changed(QString)), this, SLOT(doQtSettingsChanged(QString)), Qt::QueuedConnection);
++    connect(m_pColorSettings, SIGNAL(changed(QString)), this, SLOT(doColorSettingsChanged(QString)), Qt::DirectConnection);
++}
++
++GammaManagerWayland::~GammaManagerWayland()
++{
++     USD_LOG(LOG_DEBUG,"wayland.....");
++}
++
++GammaManagerWayland *GammaManagerWayland::GammaManagerWaylandNew()
++{
++    if (m_gammaWaylandManager == nullptr) {
++        m_gammaWaylandManager = new GammaManagerWayland();
++    }
++    return m_gammaWaylandManager;
++}
++
++bool GammaManagerWayland::Start()
++{
++    USD_LOG(LOG_DEBUG,"wayland start.....");
++    syncColorSetToKwin();
++    m_pukuiGtkConfig->connectGsettingSignal();
++}
++
++void GammaManagerWayland::Stop()
++{
++    USD_LOG(LOG_DEBUG,"wayland Stop.....");
++    if (m_pColorSettings) {
++        delete m_pColorSettings;
++    }
++
++    if (m_pQtSettings) {
++        delete m_pQtSettings;
++    }
++
++    if (m_pGtkSettings) {
++        delete m_pGtkSettings;
++    }
++
++    if (m_pukuiGtkConfig) {
++        delete m_pukuiGtkConfig;
++    }
++
++}
++
++void GammaManagerWayland::doQtSettingsChanged(QString setKey)
++{
++    if (setKey == QT_THEME_KEY) {
++        bool isAllDay = m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool();
++        bool isEnable = m_pColorSettings->get(COLOR_KEY_ENABLED).toBool();
++        USD_LOG(LOG_DEBUG,"get key:",setKey.toLatin1().data());
++        if (m_pQtSettings->get(setKey).toString() != "ukui-dark") {
++            if (m_pQtSettings->get(COLOR_KEY_DARK_MODE).toBool()) {
++                m_darkModeChangedBySelf = true;
++                m_pQtSettings->set(COLOR_KEY_STYLE_NAME_DM, m_pQtSettings->get(QT_THEME_KEY).toString());
++                m_pQtSettings->set(COLOR_KEY_DARK_MODE,false);
++                m_pQtSettings->apply();
++            }
++        }
++
++        QString theme = m_pQtSettings->get(QT_THEME_KEY).toString();
++        if (isAllDay && isEnable && theme == "ukui-dark") {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE, true);
++            m_pColorSettings->apply();
++        }
++    }
++}
++
++void GammaManagerWayland::doColorSettingsChanged(QString setKey)
++{
++    USD_LOG(LOG_DEBUG,"change key:%s",setKey.toLatin1().data());
++    if (isDarkMode(setKey)) {
++        USD_LOG(LOG_DEBUG,"is dark mode..");
++        return;
++    }
++
++    syncColorSetToKwin();
++}
++
++
++
++void GammaManagerWayland::syncColorSetToKwin()
++{
++    QHash<QString, QVariant> nightConfig;
++    QVector<ColorInfo> nightColor;
++    QDBusInterface colorIft("org.ukui.KWin",
++                            "/ColorCorrect",
++                            "org.ukui.kwin.ColorCorrect",
++                            QDBusConnection::sessionBus());
++
++    QDBusMessage result = colorIft.call("nightColorInfo");
++
++    const QDBusArgument &dbusArgs = result.arguments().at(0).value<QDBusArgument>().asVariant().value<QDBusArgument>();
++    dbusArgs.beginArray();
++    while (!dbusArgs.atEnd()) {
++        ColorInfo color;
++        dbusArgs >> color;
++        nightColor.push_back(color);
++    }
++    dbusArgs.endArray();
++
++    for (const ColorInfo it : nightColor) {
++        nightConfig.insert(it.arg, it.out.variant());
++    }
++    qDebug()<<nightConfig;
++    bool isColorEnabled = m_pColorSettings->get(COLOR_KEY_ENABLED).toBool();
++    bool isAllDay = m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool();
++    bool isAutomatic = m_pColorSettings->get(COLOR_KEY_AUTOMATIC).toBool();
++
++    if (isColorEnabled) {
++        nightConfig[KWIN_COLOR_ACTIVE] = true;
++    } else {
++        nightConfig[KWIN_COLOR_ACTIVE] = false;
++    }
++
++    if (isAllDay) {
++        nightConfig[KWIN_COLOR_MODE] = 3;
++        USD_LOG_SHOW_PARAM1(nightConfig[KWIN_COLOR_MODE].toInt());
++    } else if (isAutomatic) {
++        QVariant qVar = m_pColorSettings->get(COLOR_KEY_LAST_COORDINATES);
++        QVariantList qVarList =  qVar.value<QVariantList>();
++
++        nightConfig[KWIN_COLOR_MODE] = 2;
++        nightConfig[KWIN_LATITUDE] = qVarList[0].toDouble();
++        nightConfig[KWIN_LONGITUDE] = qVarList[1].toDouble();
++        USD_LOG_SHOW_PARAM1(nightConfig[KWIN_COLOR_MODE].toInt());
++    } else {
++//        if (inNightMode() == false) {//kwin 从夜间模式全天开启设置到开启自定义时间无法成功设置,必须中间过度一次
++//            nightConfig[KWIN_COLOR_ACTIVE] = false;
++//            colorIft.call("setNightColorConfig", nightConfig);
++//            USD_LOG(LOG_DEBUG,"ready send to kwin!..");
++//            USD_LOG(LOG_DEBUG, "active:%d,mode:%d,temp:%d long:%f lat:%f",nightConfig[KWIN_COLOR_ACTIVE].toBool(), nightConfig[KWIN_COLOR_MODE].toInt(),
++//                    nightConfig[KWIN_NIGHT_TEMP].toInt(),nightConfig[KWIN_LONGITUDE].toDouble(),nightConfig[KWIN_LATITUDE].toDouble());
++
++//        }
++        nightConfig[KWIN_COLOR_ACTIVE] = isColorEnabled;
++        nightConfig[KWIN_COLOR_MODE] = 1;//自定义时长
++        int hour;
++        int min;
++        QString start,end;
++        hour = m_pColorSettings->get(COLOR_KEY_FROM).toFloat();
++        min = int((m_pColorSettings->get(COLOR_KEY_FROM).toFloat() * 60)) % 60;
++        start = QString("%1:%2:00").arg(hour,2,10, QLatin1Char('0')).arg(min,2,10, QLatin1Char('0'));
++
++        hour = m_pColorSettings->get(COLOR_KEY_TO).toFloat();
++        min = int((m_pColorSettings->get(COLOR_KEY_TO).toFloat() * 60)) % 60;
++        end = QString("%1:%2:00").arg(hour,2,10, QLatin1Char('0')).arg(min,2,10, QLatin1Char('0'));
++
++        nightConfig[KWIN_COLOR_START] = start;
++        nightConfig[KWIN_COLOR_END] = end;
++        USD_LOG_SHOW_PARAM1(nightConfig[KWIN_COLOR_MODE].toInt());
++
++        USD_LOG(LOG_DEBUG,"%s:%s",start.toLatin1().data(), end.toLatin1().data());
++        qDebug()<<nightConfig;
++    }
++
++    nightConfig[KWIN_NIGHT_TEMP] = m_pColorSettings->get(COLOR_KEY_TEMPERATURE).toInt();
++    colorIft.call("setNightColorConfig", nightConfig);
++    USD_LOG(LOG_DEBUG,"ready send to kwin..");
++    USD_LOG(LOG_DEBUG, "active:%d,mode:%d,temp:%d long:%f lat:%f",nightConfig[KWIN_COLOR_ACTIVE].toBool(), nightConfig[KWIN_COLOR_MODE].toInt(),
++            nightConfig[KWIN_NIGHT_TEMP].toInt(),nightConfig[KWIN_LONGITUDE].toDouble(),nightConfig[KWIN_LATITUDE].toDouble());
++
++}
++
++
++
++bool GammaManagerWayland::isFracDayBetween(double value, double start, double end)
++{
++    if (end <= start) {
++        end += 24;
++    }
++
++    if (value < start && value < end) {
++        value += 24;
++    }
++
++   return value >= start && value < end;
++}
++
++bool GammaManagerWayland::inNightMode()
++{
++    QTime rtTime = QTime::currentTime();
++    double fracDay = rtTime.hour() + (double) rtTime.minute() / 60 + (double) rtTime.second() / 3600;
++    double scheduleFrom = m_pColorSettings->get(COLOR_KEY_FROM).toDouble();
++    double scheduleTo = m_pColorSettings->get(COLOR_KEY_TO).toDouble();
++
++    return isFracDayBetween(fracDay, scheduleFrom, scheduleTo);
++}
++
++bool GammaManagerWayland::isDarkMode(QString key)
++{
++    bool darkMode = m_pColorSettings->get(COLOR_KEY_DARK_MODE).toBool();
++    bool ret;
++    if (key.contains("-dm") || key == COLOR_KEY_REAL_TIME_TEMPERATURE) {
++        return true;
++    }
++
++    //外部修改，则直接退出夜间模式。
++    if (key == COLOR_KEY_ALLDAY || key == COLOR_KEY_ENABLED) {
++        bool isAllDay = m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool();
++        bool isEnable = m_pColorSettings->get(COLOR_KEY_ENABLED).toBool();
++
++        if (darkMode && false == (isAllDay & isEnable)) {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++            m_pColorSettings->apply();
++            return false;
++        } else  if (isAllDay && isEnable && darkMode  == false){
++            if (m_pQtSettings->get(QT_THEME_KEY).toString() == "ukui-dark") {
++                m_darkModeChangedBySelf = true;
++                m_pColorSettings->set(COLOR_KEY_DARK_MODE,true);
++                m_pColorSettings->apply();
++                return false;
++            }
++        }
++    } else if (key == COLOR_KEY_AUTOMATIC) {
++        ret = m_pColorSettings->get(key).toBool();
++        if (darkMode && true == ret) {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++            m_pColorSettings->apply();
++            return false;
++        }
++    } else if (key == COLOR_KEY_AUTO_THEME) {
++        ret = m_pColorSettings->get(key).toBool();
++        if (darkMode && true == ret) {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++            m_pColorSettings->apply();
++            return false;
++        }
++    }
++
++    if (key == COLOR_KEY_DARK_MODE) {
++        if (m_darkModeChangedBySelf) {
++            USD_LOG(LOG_DEBUG, "skip it....");
++            m_darkModeChangedBySelf = false;
++            return true;
++        }
++        if (m_pColorSettings->get(key).toBool()) {//进入夜间模式
++            m_pColorSettings->delay();
++            m_pColorSettings->set(COLOR_KEY_ALLDAY_DM, m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool());
++            m_pColorSettings->set(COLOR_KEY_ENABLED_DM, m_pColorSettings->get(COLOR_KEY_ENABLED).toBool());
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC_DM, m_pColorSettings->get(COLOR_KEY_AUTOMATIC).toBool());
++            m_pColorSettings->set(COLOR_KEY_STYLE_NAME_DM, m_pQtSettings->get(QT_THEME_KEY).toString());
++            m_pColorSettings->set(COLOR_KEY_AUTO_THEME_DM, m_pColorSettings->get(COLOR_KEY_AUTO_THEME).toString());//四个任意一个改变则退出夜间模式。
++
++            m_pColorSettings->set(COLOR_KEY_ALLDAY, true);
++            m_pColorSettings->set(COLOR_KEY_ENABLED, true);
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC, false);
++
++            m_pColorSettings->set(COLOR_KEY_AUTO_THEME, false);
++            m_pQtSettings->set(QT_THEME_KEY, "ukui-dark");
++            m_pGtkSettings->set(GTK_THEME_KEY, "ukui-black");
++            m_pColorSettings->apply();
++            USD_LOG(LOG_DEBUG, "enter dark mode");
++
++        } else {//退出夜间模式1
++            m_pColorSettings->delay();
++            m_pColorSettings->set(COLOR_KEY_ALLDAY, m_pColorSettings->get(COLOR_KEY_ALLDAY_DM).toBool());
++            m_pColorSettings->set(COLOR_KEY_ENABLED, m_pColorSettings->get(COLOR_KEY_ENABLED_DM).toBool());
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC, m_pColorSettings->get(COLOR_KEY_AUTOMATIC_DM).toBool());
++            m_pColorSettings->set(COLOR_KEY_AUTO_THEME, m_pColorSettings->get(COLOR_KEY_AUTO_THEME_DM).toBool());
++
++            if (false == m_pColorSettings->get(COLOR_KEY_AUTO_THEME).toBool()) {
++                if (m_pColorSettings->get(COLOR_KEY_STYLE_NAME_DM).toString() == "ukui-default") {
++                    m_pQtSettings->set(QT_THEME_KEY, "ukui-default");
++                    m_pGtkSettings->set(GTK_THEME_KEY, "ukui-white");
++                } else if(m_pColorSettings->get(COLOR_KEY_STYLE_NAME_DM).toString() == "ukui-light"){
++                    m_pQtSettings->set(QT_THEME_KEY, "ukui-light");
++                    m_pGtkSettings->set(GTK_THEME_KEY, "ukui-white");
++                } else {
++                    m_pQtSettings->set(QT_THEME_KEY, "ukui-dark");
++                    m_pGtkSettings->set(GTK_THEME_KEY, "ukui-black");
++                }
++            }
++            m_pColorSettings->apply();
++            USD_LOG(LOG_DEBUG, "exit dark mode");
++        }
++        syncColorSetToKwin();
++        return true;
++    }
++
++    return false;
++}
+diff --git a/plugins/gamma-manager/gamma-manager-wayland.h b/plugins/gamma-manager/gamma-manager-wayland.h
+new file mode 100644
+index 0000000..52900b2
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager-wayland.h
+@@ -0,0 +1,102 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef GAMMAMANAGERWAYLAND_H
++#define GAMMAMANAGERWAYLAND_H
++
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QDBusInterface>
++#include <QDBusArgument>
++#include <QObject>
++#include <QTimer>
++#include "gamma-color-info.h"
++#include "plugin-manager-interface.h"
++#include "clib-syslog.h"
++#include "gamma-manager-gtkconfig.h"
++#include "gamma-manager-define.h"
++#include "QGSettings/qgsettings.h"
++
++class GammaManagerWayland: public ManagerInterface
++{
++    Q_OBJECT
++public:
++    GammaManagerWayland();
++    GammaManagerWayland(GammaManagerWayland&)=delete;
++    GammaManagerWayland&operator=(const GammaManagerWayland&)=delete;
++public:
++    ~GammaManagerWayland();
++    static GammaManagerWayland *GammaManagerWaylandNew();
++
++    virtual bool Start();
++    virtual void Stop();
++public Q_SLOTS:
++
++    /**
++     * @brief doQtSettingsChanged
++     * @param setKey
++     */
++    void doQtSettingsChanged(QString setKey);
++
++    /**
++     * @brief doColorSettingsChanged
++     * @param setKey
++     */
++    void doColorSettingsChanged(QString setKey);
++private:
++
++    /**
++     * @brief syncColorSetToKwin
++     */
++    void syncColorSetToKwin();
++
++
++    /**
++     * @brief isFracDayBetween
++     * @param value
++     * @param start
++     * @param end
++     * @return
++     */
++    bool isFracDayBetween (double  value, double start, double end);
++
++
++    /**
++     * @brief inNightMode
++     * @return
++     */
++    bool inNightMode();
++    /**
++     * @brief isDarkMode
++     * @param key
++     * @return
++     */
++    bool isDarkMode(QString key);
++private:
++    QGSettings *m_pColorSettings;
++    QGSettings *m_pQtSettings;
++    QGSettings *m_pGtkSettings;
++    UkuiGtkConfig *m_pukuiGtkConfig;
++
++    bool m_darkModeChangedBySelf;
++    static GammaManagerWayland *m_gammaWaylandManager;
++
++};
++
++#endif // GAMMAMANAGERWAYLAND_H
+diff --git a/plugins/gamma-manager/gamma-manager.cpp b/plugins/gamma-manager/gamma-manager.cpp
+new file mode 100644
+index 0000000..20918db
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager.cpp
+@@ -0,0 +1,624 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "gamma-manager.h"
++#include "gamma-color-info.h"
++//struct ColorInfo {
++//    QString arg;
++//    QDBusVariant out;
++//};
++
++//QDBusArgument &operator<<(QDBusArgument &argument, const ColorInfo &mystruct)
++//{
++//    argument.beginStructure();
++//    argument << mystruct.arg << mystruct.out;
++//    argument.endStructure();
++//    return argument;
++//}
++
++//const QDBusArgument &operator>>(const QDBusArgument &argument, ColorInfo &mystruct)
++//{
++//    argument.beginStructure();
++//    argument >> mystruct.arg >> mystruct.out;
++//    argument.endStructure();
++//    return argument;
++//}
++
++//Q_DECLARE_METATYPE(ColorInfo)
++GammaManager *GammaManager::m_gammaManager = nullptr;
++/*
++ *
++ * 目前拆分四个类：
++ * 管理类：在合适的时机（开始运行、gsettings改变时）调用GmThread进行设置，GmLocation获取地理位置
++ * 经纬度获取类：GmLocation，用于获取经纬度
++ * 渐变类：GmApply，用户将计算后gamma值应用
++ * 没有联网时，全天生效.
++ * 缺省参数关闭。
++ * 异常处理机制：
++ * -地址链接失败，
++ * --重复三次后检查网络状态，重复6次后更换地址
++ * -json解析失败，
++ * --重复10次后检查网络状态更换地址
++*/
++GammaManager::GammaManager():
++    m_pColorSettings(nullptr),
++    m_darkModeChangedBySelf(false),
++    m_cachedTemperature(6500)
++{
++    m_pReckTimer     = new QTimer(this);
++
++    m_pGmLocation    = new GmLocation(this);
++    m_pGmThread      = new GmWorkThread(this);
++
++    m_pukuiGtkConfig = new UkuiGtkConfig(this);
++    m_pColorSettings = new QGSettings(USD_COLOR_SCHEMA);
++    m_pQtSettings    = new QGSettings(QT_THEME_SCHEMA);
++    m_pGtkSettings   = new QGSettings(GTK_THEME_SCHEMA);
++
++    m_pGmDbus        = new GmDbus(this);
++    m_pGmAdaptor     = new GmAdaptor(m_pGmDbus);
++
++    m_pReckTimer->setTimerType(Qt::PreciseTimer);
++
++    QDBusConnection sessionBus = QDBusConnection::sessionBus();
++    if (sessionBus.registerService(DBUS_GM_NAME)) {
++        sessionBus.registerObject(DBUS_GM_PATH,
++                                  m_pGmDbus,
++                                  QDBusConnection::ExportAllContents);
++        USD_LOG(LOG_DEBUG, "register gamma manager dbus success");
++    } else {
++        USD_LOG(LOG_ERR, "register dbus error");
++    }
++}
++
++GammaManager::~GammaManager()
++{
++    m_pReckTimer->stop();
++    if (m_pColorSettings) {
++        delete m_pColorSettings;
++        m_pColorSettings = nullptr;
++    }
++
++    if (m_pGmLocation) {
++        delete m_pGmLocation;
++        m_pGmLocation = nullptr;
++    }
++
++    if (m_pQtSettings) {
++        delete m_pQtSettings;
++        m_pQtSettings = nullptr;
++    }
++
++    if (m_pGtkSettings) {
++        delete m_pGtkSettings;
++        m_pGtkSettings = nullptr;
++    }
++
++    if (m_pReckTimer) {
++        delete m_pReckTimer;
++        m_pReckTimer = nullptr;
++    }
++
++    if (m_pGmThread) {
++        delete m_pGmThread;
++        m_pGmThread = nullptr;
++    }
++
++    if (m_pukuiGtkConfig) {
++        delete m_pukuiGtkConfig;
++        m_pukuiGtkConfig = nullptr;
++    }
++}
++
++GammaManager *GammaManager::GammaManagerNew()
++{
++    if (m_gammaManager == nullptr) {
++        m_gammaManager = new GammaManager();
++    }
++    return m_gammaManager;
++}
++
++bool GammaManager::Start()
++{
++    //wayland转化到x时需要禁用kwin的色温管理
++
++    if (UsdBaseClass::isEdu())
++    {
++        if (!m_pColorSettings->get(HAD_SET_EDU).toBool()) {
++            m_pColorSettings->set(COLOR_KEY_TEMPERATURE, 5150);
++            m_pColorSettings->set(COLOR_KEY_ALLDAY, true);
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC, false);
++            m_pColorSettings->set(COLOR_KEY_TEMPERATURE, 5150);
++            m_pColorSettings->set(HAD_SET_EDU,true);
++             USD_LOG(LOG_DEBUG,"--edu first  start--");
++        }
++        USD_LOG(LOG_DEBUG,"--Color check end--");
++    }
++
++    if (!m_pColorSettings->get(HAD_READ_KWIN).toBool()){
++        if (false == ReadKwinColorTempConfig()) {
++            USD_LOG(LOG_ERR,"--Kwin Color check over--");
++        }
++    }
++
++    m_pGmLocation->setGsettings(m_pColorSettings);
++    m_pGmLocation->start();
++
++    connect(m_pQtSettings, SIGNAL(changed(QString)), this, SLOT(doQtSettingsChanged(QString)), Qt::DirectConnection);
++    connect(m_pColorSettings, SIGNAL(changed(QString)), this, SLOT(doColorSettingsChanged(QString)), Qt::DirectConnection);
++    connect(m_pReckTimer, SIGNAL(timeout()), this, SLOT(doReckTimeout()), Qt::DirectConnection);
++
++    connect(m_pGmDbus, SIGNAL(screenBrightnessChanged(QString, int)), this, SLOT(doScreenBrightnessChanged(QString,int)), Qt::DirectConnection);
++    connect(m_pGmDbus, SIGNAL(allScreenBrightnessChanged(QString, int)), this, SLOT(doScreenBrightnessChanged(QString,int)), Qt::DirectConnection);
++
++
++
++
++    m_pReckTimer->setSingleShot(false);
++    m_pReckTimer->start(60000);
++    m_pukuiGtkConfig->connectGsettingSignal();
++    USD_LOG(LOG_DEBUG,"start in x.....");
++    return true;
++}
++
++void GammaManager::Stop()
++{
++    m_pGmThread->stopWork();
++    m_pGmThread->exit();
++    m_pGmThread->wait();
++    USD_LOG(LOG_DEBUG,"stop.....");
++}
++
++void GammaManager::setLocationIp(QStringList addresses)
++{
++    m_pGmLocation->setIpAddresses(addresses);
++}
++
++/*Active:1,使能，0禁用。
++ *0:全天，1跟随日出日落，2自定义
++ *Mode:1 自定义
++ *Mode:2--EveningBeginFixed（17:55:01）---跟随日出日落
++ *Mode:3--全天
++*/
++bool GammaManager::ReadKwinColorTempConfig()
++{
++    QHash<QString, QVariant> nightConfig;
++    QVector<ColorInfo> nightColor;
++    if (m_pColorSettings->keys().contains(HAD_READ_KWIN)) {
++        if (m_pColorSettings->get(HAD_READ_KWIN).toBool() == true) {
++            USD_LOG(LOG_DEBUG,"Kwin had read over..");
++            return false;
++        }
++    } else {
++        USD_LOG(LOG_DEBUG,"can't find key:%s", HAD_READ_KWIN);
++        return false;
++    }
++
++    QDBusInterface colorIft("org.ukui.KWin",
++                            "/ColorCorrect",
++                            "org.ukui.kwin.ColorCorrect",
++                            QDBusConnection::sessionBus());
++
++    QDBusMessage result = colorIft.call("nightColorInfo");
++    const QDBusArgument &dbusArgs = result.arguments().at(0).value<QDBusArgument>().asVariant().value<QDBusArgument>();
++
++    dbusArgs.beginArray();
++    while (!dbusArgs.atEnd()) {
++        ColorInfo color;
++        dbusArgs >> color;
++        nightColor.push_back(color);
++    }
++    dbusArgs.endArray();
++
++    for (ColorInfo it : nightColor) {
++        nightConfig.insert(it.arg, it.out.variant());
++    }
++
++    m_pColorSettings->set(COLOR_KEY_TEMPERATURE, nightConfig[KWIN_NIGHT_TEMP].toInt());
++    m_pColorSettings->set(COLOR_KEY_ENABLED,nightConfig[KWIN_COLOR_ACTIVE].toBool());
++
++    if (3 == nightConfig[KWIN_COLOR_MODE].toInt()) {
++        m_pColorSettings->set(COLOR_KEY_ALLDAY, true);
++    } else if (2 == nightConfig[KWIN_COLOR_MODE].toInt() && nightConfig[KWIN_COLOR_START].toString() == "17:55:01"){
++        m_pColorSettings->set(COLOR_KEY_AUTOMATIC, true);
++    } else {
++        QTime startTime = QTime::fromString(nightConfig[KWIN_COLOR_START].toString(),"hh:mm:ss");
++        QTime endTime = QTime::fromString(nightConfig[KWIN_COLOR_END].toString(),"hh:mm:ss");
++
++        m_pColorSettings->set(COLOR_KEY_FROM, hourMinuteToDouble(startTime.hour(), startTime.minute()));
++        m_pColorSettings->set(COLOR_KEY_TO, hourMinuteToDouble(endTime.hour(), endTime.minute()));
++    }
++
++    USD_LOG_SHOW_PARAM1(nightConfig[KWIN_COLOR_ACTIVE].toBool());
++    USD_LOG_SHOW_PARAM1(nightConfig[KWIN_COLOR_MODE].toInt());
++    USD_LOG_SHOW_PARAMS(nightConfig[KWIN_COLOR_START].toString().toLatin1().data());
++    USD_LOG_SHOW_PARAMS(nightConfig[KWIN_COLOR_END].toString().toLatin1().data());
++
++    m_pColorSettings->set(HAD_READ_KWIN,true);
++    nightConfig[KWIN_COLOR_ACTIVE] = false;
++    colorIft.call("setNightColorConfig", nightConfig);
++
++    nightConfig[KWIN_NIGHT_TEMP] = nightConfig[KWIN_CURRENT_TEMP];
++    nightConfig[KWIN_COLOR_ACTIVE] = false;
++    colorIft.call("setNightColorConfig", nightConfig);
++    return true;
++}
++OutputGammaInfo GammaManager::getScreensInfo()
++{
++    OutputGammaInfo hdmi;
++    OutputGammaInfo vga;
++    hdmi.OutputName = "hdmi";
++    hdmi.Gamma = 6500;
++    hdmi.Brignthess = 100;
++
++    vga.OutputName = "vga";
++    vga.Gamma = 6000;
++    vga.Brignthess = 80;
++    OutputGammaInfoList varRet;
++
++    return hdmi;
++}
++
++OutputGammaInfoList GammaManager::getScreensInfoList()
++{
++    OutputGammaInfoList infoList;
++    infoList = m_pGmThread->getAllOutputGammaInfo();
++    return infoList;
++}
++
++
++void GammaManager::doColorSettingsChanged(QString key)
++{
++    USD_LOG(LOG_DEBUG,"change key:%s",key.toLatin1().data());
++    if (isDarkMode(key)) {
++        USD_LOG(LOG_DEBUG,"return...");
++        return;
++    }
++
++//    if (key == COLOR_KEY_LAST_COORDINATES) {
++//        QVariant qVar;
++//        QVariantList qVarList;
++
++//        qVar = m_pColorSettings->get(key);
++//        qVarList = qVar.value<QVariantList>();
++//        USD_LOG(LOG_DEBUG,"key:%s(%0.4f,%0.4f)",key.toLatin1().data(), qVarList[0].toDouble(), qVarList[1].toDouble());
++//    }
++
++    gammaRecheck(key);
++}
++
++void GammaManager::doReckTimeout()
++{
++    gammaRecheck("");
++}
++
++void GammaManager::doScreenBrightnessChanged(QString outputName, int outputBrightness)
++{
++    m_pGmThread->setBrightness(outputName,outputBrightness);
++    if (!m_pGmThread->isRunning()) {
++        m_pGmThread->start();
++    }
++    USD_LOG(LOG_DEBUG,"set %s to %d", outputName.toLatin1().data(), outputBrightness);
++}
++
++bool GammaManager::isDarkMode(QString key)
++{
++    bool darkMode = m_pColorSettings->get(COLOR_KEY_DARK_MODE).toBool();
++    bool ret;
++    if (key.contains("-dm") || key == COLOR_KEY_REAL_TIME_TEMPERATURE) {
++        return true;
++    }
++
++    //外部修改，则直接退出夜间模式。
++    if (key == COLOR_KEY_ALLDAY || key == COLOR_KEY_ENABLED) {
++        bool isAllDay = m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool();
++        bool isEnable = m_pColorSettings->get(COLOR_KEY_ENABLED).toBool();
++
++        if (darkMode && false == (isAllDay & isEnable)) {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++            m_pColorSettings->apply();
++            return false;
++        } else  if (isAllDay && isEnable && darkMode  == false){
++            if (m_pQtSettings->get(QT_THEME_KEY).toString() == "ukui-dark") {
++                m_darkModeChangedBySelf = true;
++                m_pColorSettings->set(COLOR_KEY_DARK_MODE,true);
++                m_pColorSettings->apply();
++                return false;
++            }
++        }
++    } else if (key == COLOR_KEY_AUTOMATIC) {
++        ret = m_pColorSettings->get(key).toBool();
++        if (darkMode && true == ret) {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++            m_pColorSettings->apply();
++            return false;
++        }
++    } else if (key == COLOR_KEY_AUTO_THEME) {
++        ret = m_pColorSettings->get(key).toBool();
++        if (darkMode && true == ret) {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++            m_pColorSettings->apply();
++            return false;
++        }
++    }
++
++    if (key == COLOR_KEY_DARK_MODE) {
++        if (m_darkModeChangedBySelf) {
++            USD_LOG(LOG_DEBUG, "skip it....");
++            m_darkModeChangedBySelf = false;
++            return true;
++        }
++        if (m_pColorSettings->get(key).toBool()) {//进入夜间模式
++            m_pColorSettings->delay();
++            m_pColorSettings->set(COLOR_KEY_ALLDAY_DM, m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool());
++            m_pColorSettings->set(COLOR_KEY_ENABLED_DM, m_pColorSettings->get(COLOR_KEY_ENABLED).toBool());
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC_DM, m_pColorSettings->get(COLOR_KEY_AUTOMATIC).toBool());
++            m_pColorSettings->set(COLOR_KEY_STYLE_NAME_DM, m_pQtSettings->get(QT_THEME_KEY).toString());
++            m_pColorSettings->set(COLOR_KEY_AUTO_THEME_DM, m_pColorSettings->get(COLOR_KEY_AUTO_THEME).toString());//四个任意一个改变则退出夜间模式。
++
++            m_pColorSettings->set(COLOR_KEY_ALLDAY, true);
++            m_pColorSettings->set(COLOR_KEY_ENABLED, true);
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC, false);
++
++            m_pColorSettings->set(COLOR_KEY_AUTO_THEME, false);
++            m_pQtSettings->set(QT_THEME_KEY, "ukui-dark");
++            m_pGtkSettings->set(GTK_THEME_KEY, "ukui-black");
++            m_pColorSettings->apply();
++            USD_LOG(LOG_DEBUG, "enter dark mode");
++
++        } else {//退出夜间模式1
++            m_pColorSettings->delay();
++            m_pColorSettings->set(COLOR_KEY_ALLDAY, m_pColorSettings->get(COLOR_KEY_ALLDAY_DM).toBool());
++            m_pColorSettings->set(COLOR_KEY_ENABLED, m_pColorSettings->get(COLOR_KEY_ENABLED_DM).toBool());
++            m_pColorSettings->set(COLOR_KEY_AUTOMATIC, m_pColorSettings->get(COLOR_KEY_AUTOMATIC_DM).toBool());
++            m_pColorSettings->set(COLOR_KEY_AUTO_THEME, m_pColorSettings->get(COLOR_KEY_AUTO_THEME_DM).toBool());
++
++            if (false == m_pColorSettings->get(COLOR_KEY_AUTO_THEME).toBool()) {
++                if (m_pColorSettings->get(COLOR_KEY_STYLE_NAME_DM).toString() == "ukui-default") {
++                    m_pQtSettings->set(QT_THEME_KEY, "ukui-default");
++                    m_pGtkSettings->set(GTK_THEME_KEY, "ukui-white");
++                } else if(m_pColorSettings->get(COLOR_KEY_STYLE_NAME_DM).toString() == "ukui-light"){
++                    m_pQtSettings->set(QT_THEME_KEY, "ukui-light");
++                    m_pGtkSettings->set(GTK_THEME_KEY, "ukui-white");
++                } else {
++                    m_pQtSettings->set(QT_THEME_KEY, "ukui-dark");
++                    m_pGtkSettings->set(GTK_THEME_KEY, "ukui-black");
++                }
++            }
++            m_pColorSettings->apply();
++            USD_LOG(LOG_DEBUG, "exit dark mode");
++        }
++        return true;
++    }
++
++    return false;
++}
++
++bool GammaManager::isFracDayBetween(double value, double start, double end)
++{
++    if (end <= start) {
++        end += 24;
++    }
++
++    if (value < start && value < end) {
++        value += 24;
++    }
++
++   return value >= start && value < end;
++}
++
++void GammaManager::gammaRecheck(QString key)
++{
++    double fracDay;
++    double scheduleFrom = -1.f;
++    double scheduleTo = -1.f;
++    double themeFrom = -1.f;
++    double themeTo = -1.f;
++    double smear = USD_NIGHT_LIGHT_POLL_SMEAR; /* hours */
++    int theme_now = -1;
++
++    uint temperature;
++    uint tempSmeared;
++    QTime rtTime = QTime::currentTime();
++
++    fracDay = getFracTimeFromDt(rtTime);
++    scheduleFrom = m_pColorSettings->get(COLOR_KEY_AUTOMATIC_FROM).toDouble();
++    scheduleTo = m_pColorSettings->get(COLOR_KEY_AUTOMATIC_TO).toDouble();
++    if (scheduleFrom < 0.f || scheduleFrom >= 24.f) {
++        USD_LOG(LOG_ERR, "scheduleForm are error value :%f", scheduleFrom);
++        return;
++    }
++
++    if (scheduleTo < 0.f || scheduleTo >= 24.f) {
++        USD_LOG(LOG_ERR, "scheduleForm are error value :%f", scheduleTo);
++        return;
++    }
++
++    //合法性检测
++    temperature = m_pColorSettings->get(COLOR_KEY_TEMPERATURE).toUInt();
++    if(temperature < 1100 || temperature > COLOR_TEMPERATURE_DEFAULT) {
++        USD_LOG(LOG_ERR, "temperature had error value:%d", temperature);
++        return;
++    }
++
++    //自动主题
++    if (m_pColorSettings->get(COLOR_KEY_AUTO_THEME).toBool()) {
++        if (isFracDayBetween(fracDay, scheduleFrom, scheduleTo)) {
++            m_pGtkSettings->set(GTK_THEME_KEY, "ukui-black");
++            m_pQtSettings->set(QT_THEME_KEY, "ukui-dark");
++        } else {
++            m_pGtkSettings->set(GTK_THEME_KEY, "ukui-white");
++            m_pQtSettings->set(QT_THEME_KEY, "ukui-light");
++        }
++
++        if(key == COLOR_KEY_AUTO_THEME) {
++            return;
++        }
++    }
++
++    //色温使能
++    if (!m_pColorSettings->get(COLOR_KEY_ENABLED).toBool()) {
++        setTemperature(COLOR_TEMPERATURE_DEFAULT);
++        return;
++    }
++
++    //全天生效
++    if (m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool()) {
++        setTemperature(temperature);
++        return;
++    }
++
++    //跟随日出日落
++    if (m_pColorSettings->get(COLOR_KEY_AUTOMATIC).toBool()) {
++        scheduleFrom = m_pColorSettings->get(COLOR_KEY_AUTOMATIC_FROM).toDouble();
++        scheduleTo = m_pColorSettings->get(COLOR_KEY_AUTOMATIC_TO).toDouble();
++        if (scheduleFrom < 0.f || scheduleTo < 0.f) {
++            scheduleFrom = m_pColorSettings->get(COLOR_KEY_FROM).toDouble();
++            scheduleTo = m_pColorSettings->get(COLOR_KEY_TO).toDouble();
++        }
++    } else {
++        scheduleFrom = m_pColorSettings->get(COLOR_KEY_FROM).toDouble();
++        scheduleTo = m_pColorSettings->get(COLOR_KEY_TO).toDouble();
++    }
++
++    /* lower smearing period to be smaller than the time between start/stop */
++    smear = qMin (smear,
++                (qMin (qAbs ((scheduleTo - scheduleFrom)),
++                     (24 - qAbs ((scheduleTo - scheduleFrom))))));
++
++    USD_LOG(LOG_DEBUG,"fracDay:%.2f, %.2f %.2f", fracDay,scheduleFrom - smear, scheduleTo);
++    if (!isFracDayBetween (fracDay,
++                           scheduleFrom - smear,
++                           scheduleTo)) {
++        USD_LOG(LOG_DEBUG,".");
++        setTemperature(COLOR_TEMPERATURE_DEFAULT);
++        return;
++    }
++
++    /* smear the temperature for a short duration before the set limits
++    *
++    *   |----------------------| = from->to
++    * |-|                        = smear down
++    *                        |-| = smear up
++    *
++    * \                        /
++    *  \                      /
++    *   \--------------------/
++    */
++
++    if (smear < 0.01) {
++        /* Don't try to smear for extremely short or zero periods */
++        tempSmeared = temperature;
++    } else if (isFracDayBetween(fracDay,
++                                           scheduleFrom - smear,
++                                           scheduleFrom)) {
++        double factor = 1.f - ((fracDay - (scheduleFrom - smear)) / smear);
++        tempSmeared = linearInterpolate (COLOR_TEMPERATURE_DEFAULT,
++                                          temperature, factor);
++        USD_LOG(LOG_DEBUG,"val1:%d val2:%d factor:%f,frac_day:%f,schedule_from:%f",COLOR_TEMPERATURE_DEFAULT, temperature, factor,
++                fracDay,scheduleFrom);
++    } else if (isFracDayBetween (fracDay,
++                                           scheduleTo - smear,
++                                           scheduleTo)) {
++        double factor = (fracDay - (scheduleTo - smear)) / smear;
++        tempSmeared = linearInterpolate (COLOR_TEMPERATURE_DEFAULT,
++                                          temperature, factor);
++        USD_LOG(LOG_DEBUG,"val1:%d val2:%d factor:%f,frac_day:%f,schedule_from:%f",COLOR_TEMPERATURE_DEFAULT, temperature, factor,
++                fracDay,scheduleFrom);
++    } else {
++        tempSmeared = temperature;
++    }
++    USD_LOG(LOG_DEBUG,"temp_smeared:%d ...%d", tempSmeared, COLOR_TEMPERATURE_DEFAULT-tempSmeared);
++    setTemperature(tempSmeared);
++}
++
++int GammaManager::setTemperature(const uint value)
++{
++    if (m_pGmThread->getTemperature() == value) {
++        USD_LOG(LOG_DEBUG,"same value!!!");
++        return 0;
++    }
++
++    m_pGmThread->setTemperature(value);
++    if (!m_pGmThread->isRunning()) {
++        m_pGmThread->start();
++    }
++
++    return 0;
++}
++
++void GammaManager::doQtSettingsChanged(QString key)
++{
++    USD_LOG(LOG_DEBUG,".");
++    if (key == QT_THEME_KEY) {
++        bool isAllDay = m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool();
++        bool isEnable = m_pColorSettings->get(COLOR_KEY_ENABLED).toBool();
++
++        if (m_pQtSettings->get(key).toString() != "ukui-dark") {
++            if (m_pQtSettings->get(COLOR_KEY_DARK_MODE).toBool()) {
++                m_darkModeChangedBySelf = true;
++                m_pQtSettings->set(COLOR_KEY_STYLE_NAME_DM, m_pQtSettings->get(QT_THEME_KEY).toString());
++                m_pQtSettings->set(COLOR_KEY_DARK_MODE,false);
++                m_pQtSettings->apply();
++            }
++        }
++
++        QString theme = m_pQtSettings->get(QT_THEME_KEY).toString();
++        if (isAllDay && isEnable && theme == "ukui-dark") {
++            m_darkModeChangedBySelf = true;
++            m_pColorSettings->set(COLOR_KEY_DARK_MODE, true);
++            m_pColorSettings->apply();
++        }
++    }
++}
++
++void GammaManager::setBrightness(const uint value)
++{
++    if(m_pGmThread->getBrightness() == value) {
++        return;
++    }
++    USD_LOG(LOG_DEBUG, "set brightness:%d", value);
++    m_pGmThread->setAllOutputsBrightness(value);
++    if (!m_pGmThread->isRunning()) {
++        m_pGmThread->start();
++    }
++}
++
++double GammaManager::getFracTimeFromDt(QTime dt)
++{
++    return dt.hour() + (double) dt.minute() / 60 + (double) dt.second() / 3600;
++}
++
++double GammaManager::linearInterpolate(double val1, double val2, double factor)
++{
++    USD_CHECK_RETURN (factor >= 0.f, -1.f);
++    USD_CHECK_RETURN (factor <= 1.f, -1.f);
++    return ((val1 - val2) * factor) + val2;
++}
++
++double GammaManager::hourMinuteToDouble(int hour, int minute)
++{
++    double value = (double)minute/60;
++    return (double) hour + value;
++}
++
++
+diff --git a/plugins/gamma-manager/gamma-manager.h b/plugins/gamma-manager/gamma-manager.h
+new file mode 100644
+index 0000000..ffbcdd2
+--- /dev/null
++++ b/plugins/gamma-manager/gamma-manager.h
+@@ -0,0 +1,184 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef DEMOMANAGER_H
++#define DEMOMANAGER_H
++
++
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QDBusInterface>
++#include <QObject>
++#include <QTimer>
++
++#include "clib-syslog.h"
++#include "usd_base_class.h"
++#include "QGSettings/qgsettings.h"
++
++#include "gamma-manager-gtkconfig.h"
++#include "gamma-manager-define.h"
++#include "gamma-manager-dbus.h"
++#include "gamma-manager-adaptor.h"
++#include "gamma-manager-thread.h"
++#include "gamma-manager-helper.h"
++#include "gamma-manager-location.h"
++#include "plugin-manager-interface.h"
++
++class GammaManager : public ManagerInterface
++{
++    Q_OBJECT
++public:
++    GammaManager();
++    GammaManager(GammaManager&)=delete;
++    GammaManager&operator=(const GammaManager&)=delete;
++public:
++    ~GammaManager();
++    static GammaManager *GammaManagerNew();
++
++    virtual bool Start();
++    virtual void Stop();
++    /**
++     * @brief setLocationIp  pingpang测试接口
++     * @param addresses
++     */
++    void setLocationIp(QStringList addresses);//for test
++
++    /**
++     * @brief getScreensInfo 获取屏幕信息
++     * @return
++     */
++    OutputGammaInfo getScreensInfo();
++
++    /**
++     * @brief getScreensInfoList
++     * @return
++     */
++    OutputGammaInfoList getScreensInfoList();
++
++    /**
++     * @brief setTemperature 设置色温目标亮度值，渐变有thread实现
++     * @param value
++     * @return
++     */
++    int setTemperature(const uint value);//设置色温、亮度目标值，
++
++public Q_SLOTS:
++
++    /**
++     * @brief doQtSettingsChanged 辅助做夜间模式
++     * @param key
++     */
++    void doQtSettingsChanged(QString key);
++
++    /**
++     * @brief doColorSettingsChanged
++     * @param key
++     */
++    void doColorSettingsChanged(QString key);
++
++    /**
++     * @brief doReckTimeout 每分钟执行的定时器
++     */
++    void doReckTimeout();
++
++    /**
++     * @brief doSetScreenBrightness
++     * @param outputName
++     * @param outputBrightness
++     */
++    void doScreenBrightnessChanged(QString outputName, int outputBrightness);
++
++private:
++    /**
++     * @brief isDarkMode 此键值的改动是否导致进入夜间模式
++     * @param key
++     * @return
++     */
++    bool isDarkMode(QString key);
++
++    /**
++     * @brief isFracDayBetween
++     * @param value
++     * @param start
++     * @param end
++     * @return
++     */
++    bool isFracDayBetween (double  value, double start, double end);
++
++    /**
++     * @brief gammaRecheck 每分钟，或者收到color中key的changed信号重新设置色温
++     * @param key
++     */
++    void gammaRecheck(QString key);
++
++    /**
++     * @brief ReadKwinColorTempConfig 2107早期版本升级参数兼容
++     * @return
++     */
++    bool ReadKwinColorTempConfig();
++
++    /**
++     * @brief setBrightness 设置所有亮度
++     * @param value
++     */
++    void setBrightness(const uint value);
++
++    /**
++     * @brief getFracTimeFromDt
++     * @param dt
++     * @return
++     */
++    double getFracTimeFromDt(QTime dt);
++
++    /**
++     * @brief linearInterpolate 差值计算va11，val2在factor时的取值，渐变色温
++     * @param val1
++     * @param val2
++     * @param factor
++     * @return
++     */
++    double linearInterpolate(double val1, double val2, double factor);
++
++    /**
++     * @brief hourMinuteToDouble
++     * @param hour
++     * @param minute
++     * @return
++     */
++    double hourMinuteToDouble(int hour, int minute);
++
++private:
++    QGSettings *m_pColorSettings;
++    QGSettings *m_pQtSettings;
++    QGSettings *m_pGtkSettings;
++
++    QTimer      *m_pReckTimer;
++    GmLocation  *m_pGmLocation;
++    GmWorkThread    *m_pGmThread;
++    GmAdaptor   *m_pGmAdaptor;
++    GmDbus      *m_pGmDbus;
++    UkuiGtkConfig *m_pukuiGtkConfig;
++    int  m_cachedTemperature;
++
++    bool m_darkModeChangedBySelf;
++    static GammaManager *m_gammaManager;
++};
++
++
++#endif // DEMOMANAGER_H
+diff --git a/plugins/gamma-manager/org.ukui.SettingsDaemon.plugins.color.gschema.xml b/plugins/gamma-manager/org.ukui.SettingsDaemon.plugins.color.gschema.xml
+new file mode 100644
+index 0000000..d4d1f50
+--- /dev/null
++++ b/plugins/gamma-manager/org.ukui.SettingsDaemon.plugins.color.gschema.xml
+@@ -0,0 +1,110 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<schemalist>
++  <schema gettext-domain="ukui-settings-daemon" id="org.ukui.SettingsDaemon.plugins.color" path="/org/ukui/settings-daemon/plugins/color/">
++    <key name="active" type="b">
++      <default>true</default>
++      <summary>Activation of this plugin</summary>
++      <description>Whether this plugin would be activated by unity-settings-daemon or not</description>
++    </key>
++    <key name="priority" type="i">
++      <default>16</default>
++      <summary>Priority to use for this plugin</summary>
++      <description>Priority to use for this plugin in unity-settings-daemon startup queue</description>
++    </key>
++    <key name="night-light-enabled" type="b">
++      <default>false</default>
++      <summary>If the night light mode is enabled</summary>
++      <description>Night light mode changes the color temperature of your display when the sun has gone down or at preset times.</description>
++    </key>
++    <key name="night-light-temperature" type="u">
++      <default>4000</default>
++      <summary>Temperature of the display when enabled</summary>
++      <description>This temperature in Kelvin is used to modify the screen tones when night light mode is enabled. Higher values are bluer, lower redder.</description>
++    </key>
++    <key name="real-time-temperature" type="u">
++      <default>4000</default>
++      <summary>Temperature of real time</summary>
++      <description>Temperature of real time</description>
++    </key>
++    <key name="night-light-schedule-automatic" type="b">
++      <default>true</default>
++      <summary>Use the sunrise and sunset</summary>
++      <description>Calculate the sunrise and sunset times automatically, from the current location.</description>
++    </key>
++    <key name="night-light-schedule-from" type="d">
++      <default>20.00</default>
++      <summary>The start time</summary>
++      <description>When “night-light-schedule-automatic” is disabled, use this start time in hours from midnight.</description>
++    </key>
++    <key name="night-light-schedule-to" type="d">
++      <default>6.00</default>
++      <summary>The end time</summary>
++      <description>When “night-light-schedule-automatic” is disabled, use this end time in hours from midnight.</description>
++    </key>
++    <key name="night-light-last-coordinates" type="(dd)">
++      <default>(999,999)</default>
++      <summary>The last detected position</summary>
++      <description>When location services are available this represents the last detected location. The default value is an invalid value to ensure it is always updated at startup.</description>
++    </key>
++    <key name="night-light-allday" type="b">
++      <default>false</default>
++      <summary>Open night light all day</summary>
++      <description>(intel)At any time, night mode is open.</description>
++    </key>
++    <key name="theme-schedule-automatic" type="b">
++      <default>false</default>
++      <summary>Use the sunrise and sunset to set theme</summary>
++      <description>(intel)Calculate the sunrise and sunset times, and set the theme automatically.</description>
++    </key>
++    <key name="night-light-schedule-automatic-from" type="d">
++      <default>0.00</default>
++      <summary>The start time</summary>
++      <description>(intel)When “night-light-schedule-automatic” is enabled, calculate this start time in hours from midnight.</description>
++    </key>
++    <key name="night-light-schedule-automatic-to" type="d">
++      <default>0.00</default>
++      <summary>The end time</summary>
++      <description>(intel)When “night-light-schedule-automatic” is enabled, calculate this end time in hours from midnight.</description>
++    </key>
++    <key name="had-read-kwin-config" type="b">
++      <default>false</default>
++      <summary>Use the read kwin config</summary>
++      <description>.</description>
++    </key>
++    <key name="dark-mode" type="b">
++      <default>false</default>
++      <summary>Use set dark mode</summary>
++      <description>.</description>
++    </key>
++    <key name="style-name-dm" type="s">
++      <default>''</default>
++      <summary>Use record theme style,when dark mode is true record the /org/ukui/style's key style-name,when dark mode is false set this value to the style-name.</summary>
++      <description>.</description>
++    </key>
++    <key name="night-light-enabled-dm" type="b">
++      <default>false</default>
++      <summary>If the night light mode is enabled</summary>
++      <description>Use record theme style,when dark mode is true record the night-light-enabled,when dark mode is false set this value to it.</description>
++    </key>
++    <key name="night-light-allday-dm" type="b">
++      <default>false</default>
++      <summary>Open night light all day</summary>
++      <description>Use record theme style,when dark mode is true record the night-light-allday,when dark mode is false set this value to it.</description>
++    </key>
++    <key name="night-light-schedule-automatic-dm" type="b">
++      <default>false</default>
++      <summary>Use the sunrise and sunset to set theme</summary>
++      <description>Use record theme style,when dark mode is true record the night-light-schedule-automatic,when dark mode is false set this value to it.</description>
++    </key>
++    <key name="theme-schedule-automatic-dm" type="b">
++      <default>false</default>
++      <summary>Use the sunrise and sunset to set theme</summary>
++      <description>Use record theme style,when dark mode is true record the theme-schedule-automatic,when dark mode is false set this value to it.</description>
++    </key>
++    <key name="had-set-edu" type="b">
++      <default>false</default>
++      <summary>Use the edu config</summary>
++      <description>.</description>
++    </key>
++  </schema>
++</schemalist>
+diff --git a/plugins/gamma-manager/pingpongtest.cpp b/plugins/gamma-manager/pingpongtest.cpp
+new file mode 100644
+index 0000000..98407d1
+--- /dev/null
++++ b/plugins/gamma-manager/pingpongtest.cpp
+@@ -0,0 +1,128 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++#include "pingpongtest.h"
++
++PingPongTest::PingPongTest(QObject *parent):m_pGetTimer(nullptr),
++    m_NAM(nullptr)
++{
++    m_pGetTimer = new QTimer(this);
++    m_pGmHelper = new GmHelper(this);
++    connect(m_pGetTimer, SIGNAL(timeout()), this, SLOT(doTimerOut()), Qt::DirectConnection);
++}
++
++void PingPongTest::setTestUrlList(QStringList urlList)
++{
++    m_urlList = urlList;
++}
++
++void PingPongTest::start()
++{
++    m_pGetTimer->start(1000);
++}
++
++void PingPongTest::doNAMFinished(QNetworkReply *reply)
++{
++    static int retryTimes = 0;
++
++    QTime stopTime = QTime::currentTime();
++    QVariant statusCodeV =
++            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
++    // Or the target URL if it was a redirect:
++    QVariant redirectionTargetUrl =
++            reply->attribute(QNetworkRequest::RedirectionTargetAttribute);
++    // see CS001432 on how to handle this
++
++    // no error received?
++    if (reply->error() == QNetworkReply::NoError) {
++        QByteArray bytes = reply->readAll();  // bytes
++        QString msg = QString::fromUtf8(bytes);
++
++        if (m_pGmHelper->getLonAndLatByJson(m_currentUrl, bytes, m_location)) {
++            USD_LOG(LOG_DEBUG,"location(%0.4f,%0.4f)",m_location.width(), m_location.height());
++            //return;
++        }
++        setBeyondTime(m_currentUrl, m_connectTime.msecsTo(stopTime));
++        //USD_LOG(LOG_DEBUG,"elpased:%d:%s @%d", m_connectTime.msecsTo(stopTime), msg.toLatin1().data(),retryTimes);
++    }  else {
++        USD_LOG(LOG_DEBUG,"elpased:%d error!%d",m_connectTime.msecsTo(stopTime),reply->error());
++        setBeyondTime(m_currentUrl, m_connectTime.msecsTo(stopTime),1);
++    }
++
++}
++
++void PingPongTest::doTimerOut()
++{
++    QUrl url;
++    if (m_RTurl >= m_urlList.count()) {
++        m_RTurl = 0;
++    }
++
++    if(m_NAM == nullptr) {
++       m_NAM = new QNetworkAccessManager(this);
++       connect(m_NAM, SIGNAL(finished(QNetworkReply*)),this, SLOT(doNAMFinished(QNetworkReply*)));
++    }
++
++    m_currentUrl = m_urlList[m_RTurl];
++    url.setUrl(m_currentUrl);
++    m_NAM->get(QNetworkRequest(url));
++    m_connectTime = QTime::currentTime();
++    m_RTurl++;
++}
++
++void PingPongTest::doNAMTimerOut()
++{
++
++}
++
++void PingPongTest::setBeyondTime(QString url, int time, int error)
++{
++START:
++    Q_FOREACH(testInfo *info, m_testDataList) {
++        if (url==info->url){
++            if (error){
++                info->m_miss++;
++            }
++            else if (time < 101) {
++                info->m_less100ms++;
++            } else if (time < 1001) {
++                info->m_less1000ms++;
++            } else if (time < 2001) {
++                info->m_less2000ms++;
++            } else if (time < 3001) {
++                info->m_less3000ms++;
++            } else if (time < 4001) {
++                info->m_less4000ms++;
++            } else {
++                info->m_exceed4000ms++;
++            }
++            info->testTimes++;
++            info->totalTime += time;
++            info->avgTime = info->totalTime / info->testTimes;
++            //USD_LOG(LOG_DEBUG,"..");
++            USD_LOG(LOG_DEBUG,"url[%s],100:%d,less 1000:%d,less 2000:%d,less 3000:%d,less 4000:%d, exceed 4000:%d,avg:%0.2f, times:%d(miss:%d)",info->url.toLatin1().data(),
++                            info->m_less100ms,info->m_less1000ms,info->m_less2000ms,info->m_less3000ms,info->m_less4000ms, info->m_exceed4000ms,info->avgTime,info->testTimes,info->m_miss);
++            return;
++        }
++    }
++    testInfo *pinfo = new testInfo(this);
++    pinfo->url = url;
++    m_testDataList.append(pinfo);
++    goto START;
++}
++
+diff --git a/plugins/gamma-manager/pingpongtest.h b/plugins/gamma-manager/pingpongtest.h
+new file mode 100644
+index 0000000..1f901a2
+--- /dev/null
++++ b/plugins/gamma-manager/pingpongtest.h
+@@ -0,0 +1,91 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef PINGPONGTEST_H
++#define PINGPONGTEST_H
++
++#include <QNetworkAccessManager>
++#include <QNetworkReply>
++#include <QDBusInterface>
++#include <QObject>
++#include <QTimer>
++
++#include "clib-syslog.h"
++#include "gamma-manager-define.h"
++#include "QGSettings/qgsettings.h"
++#include "gamma-manager-helper.h"
++
++class testInfo:public QObject
++{
++    Q_OBJECT
++public:
++    testInfo(QObject *parent = nullptr){
++        url = "";
++        m_less100ms = 0;
++        m_less1000ms = 0;
++        m_less2000ms = 0;
++        m_less3000ms = 0;
++        m_less4000ms = 0;
++        m_exceed4000ms = 0;
++        testTimes = 0;
++        totalTime = 0;
++        avgTime = 0;
++        m_miss = 0;
++    }
++    QString url;
++    int m_less100ms;
++    int m_less1000ms;
++    int m_less2000ms;
++    int m_less3000ms;
++    int m_less4000ms;
++    int m_exceed4000ms;
++    int testTimes;
++    qulonglong totalTime;
++    double avgTime;
++    int m_miss;
++};
++
++class PingPongTest: public QObject
++{
++    Q_OBJECT
++public:
++    PingPongTest(QObject *parent =nullptr);
++
++    void setTestUrlList(QStringList urlList);
++    void start();
++public Q_SLOTS:
++    void doNAMFinished(QNetworkReply *reply);
++    void doTimerOut();
++    void doNAMTimerOut();
++private:
++    void setBeyondTime(QString url, int time, int error = 0);
++private:
++    QStringList m_urlList;
++    QString     m_currentUrl;
++    int m_RTurl;
++    QTimer      *m_pGetTimer;
++    QTimer      *m_NAMTimr;
++    QTime       m_connectTime;
++    GmHelper                *m_pGmHelper;
++    QNetworkAccessManager   *m_NAM;
++    QSizeF                   m_location;
++    QList<testInfo*> m_testDataList;
++};
++
++#endif // PINGPONGTEST_H
+diff --git a/plugins/gamma-manager/rgb-gamma-table.h b/plugins/gamma-manager/rgb-gamma-table.h
+new file mode 100644
+index 0000000..7735cb6
+--- /dev/null
++++ b/plugins/gamma-manager/rgb-gamma-table.h
+@@ -0,0 +1,248 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef GMGGBGAMMATABLE_H
++#define GMGGBGAMMATABLE_H
++#include "QObject"
++typedef struct {
++    unsigned char	 R;
++     unsigned char	 G;
++     unsigned char	 B;
++} colorRGB8;
++
++typedef struct {
++    double	 L;
++    double	 a;
++    double	 b;
++} colorLab;
++
++typedef struct {
++    double	 Y;
++    double	 x;
++    double	 y;
++} colorYxy;
++
++typedef struct {
++    double	 X;
++    double	 Y;
++    double	 Z;
++} colorXYZ;
++
++typedef struct {
++    double	 R;
++    double	 G;
++    double	 B;
++} ColorRGB;
++
++typedef struct {
++    double	 U;
++    double	 V;
++    double	 W;
++} colorUVW;
++
++static const ColorRGB blackbodyDataD65modified[] = {
++    { 1.0000, 0.0425, 0.0000 }, /* 1000K */
++    { 1.0000, 0.0668, 0.0000 }, /* 1100K */
++    { 1.0000, 0.0911, 0.0000 }, /* 1200K */
++    { 1.0000, 0.1149, 0.0000 }, /* ... */
++    { 1.0000, 0.1380, 0.0000 },
++    { 1.0000, 0.1604, 0.0000 },
++    { 1.0000, 0.1819, 0.0000 },
++    { 1.0000, 0.2024, 0.0000 },
++    { 1.0000, 0.2220, 0.0000 },
++    { 1.0000, 0.2406, 0.0000 },
++    { 1.0000, 0.2630, 0.0062 },/* 2000K */
++    { 1.0000, 0.2868, 0.0155 },
++    { 1.0000, 0.3102, 0.0261 },
++    { 1.0000, 0.3334, 0.0379 },
++    { 1.0000, 0.3562, 0.0508 },
++    { 1.0000, 0.3787, 0.0650 },
++    { 1.0000, 0.4008, 0.0802 },
++    { 1.0000, 0.4227, 0.0964 },
++    { 1.0000, 0.4442, 0.1136 },
++    { 1.0000, 0.4652, 0.1316 },
++    { 1.0000, 0.4859, 0.1505 },/* 3000K */
++    { 1.0000, 0.5062, 0.1702 },
++    { 1.0000, 0.5262, 0.1907 },
++    { 1.0000, 0.5458, 0.2118 },
++    { 1.0000, 0.5650, 0.2335 },
++    { 1.0000, 0.5839, 0.2558 },
++    { 1.0000, 0.6023, 0.2786 },
++    { 1.0000, 0.6204, 0.3018 },
++    { 1.0000, 0.6382, 0.3255 },
++    { 1.0000, 0.6557, 0.3495 },
++    { 1.0000, 0.6727, 0.3739 },/* 4000K */
++    { 1.0000, 0.6894, 0.3986 },
++    { 1.0000, 0.7058, 0.4234 },
++    { 1.0000, 0.7218, 0.4485 },
++    { 1.0000, 0.7375, 0.4738 },
++    { 1.0000, 0.7529, 0.4992 },
++    { 1.0000, 0.7679, 0.5247 },
++    { 1.0000, 0.7826, 0.5503 },
++    { 1.0000, 0.7970, 0.5760 },
++    { 1.0000, 0.8111, 0.6016 },
++    { 1.0000, 0.8250, 0.6272 },/* 5000K */
++    { 1.0000, 0.8384, 0.6529 },
++    { 1.0000, 0.8517, 0.6785 },
++    { 1.0000, 0.8647, 0.7040 },
++    { 1.0000, 0.8773, 0.7294 },
++    { 1.0000, 0.8897, 0.7548 },
++    { 1.0000, 0.9019, 0.7801 },
++    { 1.0000, 0.9137, 0.8051 },
++    { 1.0000, 0.9254, 0.8301 },
++    { 1.0000, 0.9367, 0.8550 },
++    { 1.0000, 0.9478, 0.8795 },/* 6000K */
++    { 1.0000, 0.9587, 0.9040 },
++    { 1.0000, 0.9694, 0.9283 },
++    { 1.0000, 0.9798, 0.9524 },
++    { 1.0000, 0.9900, 0.9763 },
++    { 1.0000, 1.0000, 1.0000 }, /* 6500K */
++    { 0.9771, 0.9867, 1.0000 },
++    { 0.9554, 0.9740, 1.0000 },
++    { 0.9349, 0.9618, 1.0000 },
++    { 0.9154, 0.9500, 1.0000 },
++    { 0.8968, 0.9389, 1.0000 },
++    { 0.8792, 0.9282, 1.0000 },
++    { 0.8624, 0.9179, 1.0000 },
++    { 0.8465, 0.9080, 1.0000 },
++    { 0.8313, 0.8986, 1.0000 },
++    { 0.8167, 0.8895, 1.0000 },
++    { 0.8029, 0.8808, 1.0000 },
++    { 0.7896, 0.8724, 1.0000 },
++    { 0.7769, 0.8643, 1.0000 },
++    { 0.7648, 0.8565, 1.0000 },
++    { 0.7532, 0.8490, 1.0000 },
++    { 0.7420, 0.8418, 1.0000 },
++    { 0.7314, 0.8348, 1.0000 },
++    { 0.7212, 0.8281, 1.0000 },
++    { 0.7113, 0.8216, 1.0000 },
++    { 0.7018, 0.8153, 1.0000 },
++    { 0.6927, 0.8092, 1.0000 },
++    { 0.6839, 0.8032, 1.0000 },
++    { 0.6755, 0.7975, 1.0000 },
++    { 0.6674, 0.7921, 1.0000 },
++    { 0.6595, 0.7867, 1.0000 },
++    { 0.6520, 0.7816, 1.0000 },
++    { 0.6447, 0.7765, 1.0000 },
++    { 0.6376, 0.7717, 1.0000 },
++    { 0.6308, 0.7670, 1.0000 },
++    { 0.6242, 0.7623, 1.0000 },
++    { 0.6179, 0.7579, 1.0000 },
++    { 0.6117, 0.7536, 1.0000 },
++    { 0.6058, 0.7493, 1.0000 },
++    { 0.6000, 0.7453, 1.0000 },
++    { 0.5944, 0.7414, 1.0000 } /* 10000K */
++};
++
++/* source: https://github.com/jonls/redshift/blob/master/README-colorramp
++ * use a Planckian curve below 5000K */
++static const ColorRGB blackbodyDataD65plankian[] = {
++    { 1.0000, 0.1817, 0.0000 }, /* 1000K */
++    { 1.0000, 0.2550, 0.0000 }, /* 1100K */
++    { 1.0000, 0.3094, 0.0000 }, /* 1200K */
++    { 1.0000, 0.3536, 0.0000 }, /* ... */
++    { 1.0000, 0.3909, 0.0000 },
++    { 1.0000, 0.4232, 0.0000 },
++    { 1.0000, 0.4516, 0.0000 },
++    { 1.0000, 0.4768, 0.0000 },
++    { 1.0000, 0.4992, 0.0000 },
++    { 1.0000, 0.5194, 0.0000 },
++    { 1.0000, 0.5436, 0.0868 },/* 2000K */
++    { 1.0000, 0.5662, 0.1407 },
++    { 1.0000, 0.5873, 0.1836 },
++    { 1.0000, 0.6072, 0.2214 },
++    { 1.0000, 0.6260, 0.2559 },
++    { 1.0000, 0.6437, 0.2882 },
++    { 1.0000, 0.6605, 0.3187 },
++    { 1.0000, 0.6765, 0.3479 },
++    { 1.0000, 0.6916, 0.3758 },
++    { 1.0000, 0.7060, 0.4027 },
++    { 1.0000, 0.7198, 0.4286 },/* 3000K */
++    { 1.0000, 0.7329, 0.4537 },
++    { 1.0000, 0.7454, 0.4779 },
++    { 1.0000, 0.7574, 0.5015 },
++    { 1.0000, 0.7689, 0.5243 },
++    { 1.0000, 0.7799, 0.5464 },
++    { 1.0000, 0.7904, 0.5679 },
++    { 1.0000, 0.8005, 0.5888 },
++    { 1.0000, 0.8102, 0.6092 },
++    { 1.0000, 0.8196, 0.6289 },
++    { 1.0000, 0.8285, 0.6482 },/* 4000K */
++    { 1.0000, 0.8372, 0.6669 },
++    { 1.0000, 0.8455, 0.6851 },
++    { 1.0000, 0.8535, 0.7028 },
++    { 1.0000, 0.8612, 0.7201 },
++    { 1.0000, 0.8686, 0.7369 },
++    { 1.0000, 0.8758, 0.7533 },
++    { 1.0000, 0.8827, 0.7692 },
++    { 1.0000, 0.8893, 0.7848 },
++    { 1.0000, 0.8958, 0.7999 },
++    { 1.0000, 0.9020, 0.8147 },/* 5000K */
++    { 1.0000, 0.9096, 0.8284 },
++    { 1.0000, 0.9171, 0.8419 },
++    { 1.0000, 0.9244, 0.8552 },
++    { 1.0000, 0.9316, 0.8684 },
++    { 1.0000, 0.9385, 0.8813 },
++    { 1.0000, 0.9454, 0.8940 },
++    { 1.0000, 0.9520, 0.9066 },
++    { 1.0000, 0.9585, 0.9189 },
++    { 1.0000, 0.9649, 0.9311 },
++    { 1.0000, 0.9711, 0.9431 },
++    { 1.0000, 0.9771, 0.9548 },
++    { 1.0000, 0.9831, 0.9664 },
++    { 1.0000, 0.9888, 0.9778 },
++    { 1.0000, 0.9945, 0.9890 },
++    { 1.0000, 1.0000, 1.0000 }, /* 6500K */
++    { 0.9895, 0.9935, 1.0000 },
++    { 0.9794, 0.9872, 1.0000 },
++    { 0.9698, 0.9812, 1.0000 },
++    { 0.9605, 0.9754, 1.0000 },
++    { 0.9516, 0.9698, 1.0000 },
++    { 0.9430, 0.9644, 1.0000 },
++    { 0.9348, 0.9592, 1.0000 },
++    { 0.9269, 0.9542, 1.0000 },
++    { 0.9193, 0.9494, 1.0000 },
++    { 0.9119, 0.9447, 1.0000 },
++    { 0.9049, 0.9402, 1.0000 },
++    { 0.8981, 0.9358, 1.0000 },
++    { 0.8915, 0.9316, 1.0000 },
++    { 0.8852, 0.9275, 1.0000 },
++    { 0.8791, 0.9236, 1.0000 },
++    { 0.8732, 0.9197, 1.0000 },
++    { 0.8674, 0.9160, 1.0000 },
++    { 0.8619, 0.9125, 1.0000 },
++    { 0.8566, 0.9090, 1.0000 },
++    { 0.8514, 0.9056, 1.0000 },
++    { 0.8464, 0.9023, 1.0000 },
++    { 0.8415, 0.8991, 1.0000 },
++    { 0.8368, 0.8960, 1.0000 },
++    { 0.8323, 0.8930, 1.0000 },
++    { 0.8278, 0.8901, 1.0000 },
++    { 0.8235, 0.8873, 1.0000 },
++    { 0.8194, 0.8845, 1.0000 },
++    { 0.8153, 0.8818, 1.0000 },
++    { 0.8114, 0.8792, 1.0000 },
++    { 0.8075, 0.8767, 1.0000 },
++    { 0.8038, 0.8742, 1.0000 },
++    { 0.8002, 0.8718, 1.0000 },
++    { 0.7967, 0.8694, 1.0000 },
++    { 0.7932, 0.8671, 1.0000 },
++    { 0.7898, 0.8649, 1.0000 } /* 10000K */
++};
++#endif // GMGGBGAMMATABLE_H
+diff --git a/plugins/housekeeping/usd-disk-space.cpp b/plugins/housekeeping/usd-disk-space.cpp
+index 4ee0ac7..3181862 100644
+--- a/plugins/housekeeping/usd-disk-space.cpp
++++ b/plugins/housekeeping/usd-disk-space.cpp
+@@ -601,6 +601,7 @@ bool DiskSpace::ldsm_check_all_mounts ()
+         }
+ 
+         check_mounts = g_list_prepend (check_mounts, mount_info);
++
+     }
+     g_list_free (mounts);
+ 
+diff --git a/plugins/housekeeping/usd-ldsm-dialog.cpp b/plugins/housekeeping/usd-ldsm-dialog.cpp
+index 5300edf..5efea96 100644
+--- a/plugins/housekeeping/usd-ldsm-dialog.cpp
++++ b/plugins/housekeeping/usd-ldsm-dialog.cpp
+@@ -70,7 +70,6 @@ LdsmDialog::~LdsmDialog()
+     delete ui;
+     delete picture_label;
+     delete primary_label;
+-    delete second_label;
+     delete ignore_check_button;
+     delete ignore_button;
+ 
+@@ -101,16 +100,14 @@ void LdsmDialog::windowLayoutInit(bool display_baobab)
+ 
+     picture_label = new QLabel(this);
+     primary_label = new QLabel(this);
+-    second_label = new QLabel(this);
+-    second_area = new QScrollArea(this);
++    scroll_area = new QScrollArea(this);
+     ignore_check_button = new QCheckBox(this);
+     ignore_button=new QPushButton(this);
+ 
+     picture_label->setProperty("Name", "picture_label");
+     primary_label->setProperty("Name", "primary_label");
+-    second_label->setProperty("Name", "second_label");
+-    second_area->setProperty("Name", "second_area");
+-    second_area->setFrameShape(QFrame::NoFrame);
++    scroll_area->setProperty("Name", "scroll_area");
++    scroll_area->setFrameShape(QFrame::NoFrame);
+     ignore_check_button->setProperty("Name", "ignore_check_button");
+     ignore_button->setProperty("Name", "ignore_button");
+ 
+@@ -119,25 +116,23 @@ void LdsmDialog::windowLayoutInit(bool display_baobab)
+     picture_label->setAlignment(Qt::AlignCenter);
+     picture_label->setStyleSheet(QString("border-image:url(../ldsm_dialog/warning.png);"));
+     //warning information text
+-    primary_label->setGeometry(66,20,560,30);
+-    second_area->setGeometry(66,50,560,40*2);
+-    second_area->setWidget(second_label);
+-    second_area->setWidgetResizable(true);
+-    second_label->setGeometry(66,50,560,40*2);
+-
+-    second_label->setWordWrap(true);
+-    second_label->setAlignment(Qt::AlignLeft);
++    scroll_area->setGeometry(50, 20, 560, 40*2);
++    scroll_area->setWidget(primary_label);
++    scroll_area->setWidgetResizable(true);
++    primary_label->setGeometry(50, 20, 560, 40*2);
+ 
++    primary_label->setWordWrap(true);
++    primary_label->setAlignment(Qt::AlignLeft);
+ 
+     primary_label->setText(getPrimaryText());
+-    second_label->setText(getSecondText());
++//    primary_label->adjustSize();
+ 
+     //gsettings set box
+     ignore_check_button->setGeometry(70,135,400,30);
+     ignore_check_button->setText(getCheckButtonText());
+ 
+     ignore_button->setGeometry(dialog_width-110,dialog_height-40,96,36);
+-    ignore_button->setText(tr("Ignore"));
++    ignore_button->setText(tr("Confirm"));
+ 
+     if(this->has_trash){
+         trash_empty = new QPushButton(this);
+@@ -153,48 +148,19 @@ void LdsmDialog::windowLayoutInit(bool display_baobab)
+         else
+             analyze_button->setGeometry(dialog_width-215,dialog_height-40,96,36);
+     }
+-
+     updateText("");
+ }
+ 
+ QString LdsmDialog::getPrimaryText()
+ {
+-    QString primary_text;
+-    char* free_space=g_format_size(space_remaining);
+-    if(other_partitions)
+-        primary_text=QString().sprintf((tr("The volume \"%1\" has only %s disk space remaining.")).toLocal8Bit().constData(),
+-                                       free_space).arg(partition_name);
+-    else
+-        primary_text=QString().sprintf((tr("The computer has only %s disk space remaining.")).toLocal8Bit().constData(),
+-                                       free_space);
+-    return primary_text;
+-}
+-
+-QString LdsmDialog::getSecondText()
+-{
+-    if(other_usable_partitions){
+-        if(has_trash)
+-            return QString(tr("You can free up disk space by emptying the Trash, removing " \
+-                           "unused programs or files, or moving files to another disk or partition."));
+-        else
+-            return QString(tr("You can free up disk space by removing unused programs or files, " \
+-                           "or by moving files to another disk or partition."));
+-    }else{
+-        if(has_trash)
+-            return QString(tr("You can free up disk space by emptying the Trash, removing unused " \
+-                           "programs or files, or moving files to an external disk."));
+-        else
+-            return QString(tr("You can free up disk space by removing unused programs or files, " \
+-                           "or by moving files to an external disk."));
+-    }
++    char* free_space = g_format_size(space_remaining);
++    return QString(tr("The remaining space of drive \"%1\" is less than %2, "\
++                            "clear the garbage or move the data to another disk in time.")).arg(partition_name).arg(free_space);
+ }
+ 
+ QString LdsmDialog::getCheckButtonText()
+ {
+-    if(other_partitions)
+-        return QString(tr("Don't show any warnings again for this file system"));
+-    else
+-        return QString(tr("Don't show any warnings again"));
++    return QString(tr("Messages that no longer remind this disk"));
+ }
+ 
+ void LdsmDialog::allConnectEvent(bool display_baobab)
+@@ -254,8 +220,7 @@ void LdsmDialog::updateText(QString key)
+         resetFont(trash_empty, tr("Empty Trash"));
+     }
+ 
+-    resetFont(ignore_button, tr("Ignore"));
+-    resetFont(primary_label, getPrimaryText());
++    resetFont(ignore_button, tr("Confirm"));
+ }
+ 
+ void LdsmDialog::resetFont(QWidget *pWid, QString str)
+diff --git a/plugins/housekeeping/usd-ldsm-dialog.h b/plugins/housekeeping/usd-ldsm-dialog.h
+index e4c4cb3..07574f0 100644
+--- a/plugins/housekeeping/usd-ldsm-dialog.h
++++ b/plugins/housekeeping/usd-ldsm-dialog.h
+@@ -54,8 +54,7 @@ private:
+     Ui::LdsmDialog *ui;
+     QLabel* picture_label;
+     QLabel* primary_label;
+-    QLabel* second_label;
+-    QScrollArea *second_area;
++    QScrollArea *scroll_area;
+     QCheckBox* ignore_check_button;
+     QPushButton* trash_empty = nullptr;
+     QPushButton* ignore_button;
+@@ -83,7 +82,6 @@ public Q_SLOTS:
+ private:
+     void windowLayoutInit(bool display_baobab);
+     QString getPrimaryText();
+-    QString getSecondText();
+     QString getCheckButtonText();
+     void allConnectEvent(bool display_baobab);
+ 
+diff --git a/plugins/media-keys/mediakey-manager.cpp b/plugins/media-keys/mediakey-manager.cpp
+index 2af557a..b894712 100644
+--- a/plugins/media-keys/mediakey-manager.cpp
++++ b/plugins/media-keys/mediakey-manager.cpp
+@@ -1538,13 +1538,13 @@ bool MediaKeysManager::doAction(int type)
+         doOpenTerminalAction();
+         break;
+     case SCREENSHOT_KEY:
+-        doScreenshotAction(" full");
++        doScreenshotAction("full");
+         break;
+     case AREA_SCREENSHOT_KEY:
+-        doScreenshotAction(" gui");
++        doScreenshotAction("gui");
+         break;
+     case WINDOW_SCREENSHOT_KEY:
+-        doScreenshotAction(" screen");
++        doScreenshotAction("screen");
+         break;
+     case SYSTEM_MONITOR_KEY:
+         doOpenMonitor();
+@@ -1974,39 +1974,24 @@ bool binaryFileExists(const QString& binary)
+     return false;
+ }
+ 
+-void MediaKeysManager::executeCommand(const QString& command,const QString& paramter){
+-    QString cmd = command + paramter;
+-    char   **argv;
+-    int     argc;
+-    bool    retval;
+-
+-    //processAbstractPath(cmd);
+-    if(!cmd.isEmpty()){
+-        if (g_shell_parse_argv (cmd.toLatin1().data(), &argc, &argv, NULL)) {
+-            retval = g_spawn_async (g_get_home_dir (),
+-                                    argv,
+-                                    NULL,
+-                                    G_SPAWN_SEARCH_PATH,
+-                                    NULL,
+-                                    NULL,
+-                                    NULL,
+-                                    NULL);
+-            g_strfreev (argv);
+-        }
+-        //mExecCmd->execute(cmd + paramter);//mExecCmd->start(cmd + paramter);
++void MediaKeysManager::executeCommand(const QString& program, const QStringList &arguments)
++{
++    QProcess process;
++    process.setProgram(program);
++    process.setArguments(arguments);
++    if (!process.startDetached()) {
++        USD_LOG(LOG_DEBUG, "%s had a error", program.toLatin1().data());
+     }
+-    else
+-        qWarning("%s cannot found at system path!",command.toLatin1().data());
+ }
+ 
+ void MediaKeysManager::doShutdownAction()
+ {
+-    executeCommand("ukui-session-tools"," --shutdown");
++    executeCommand("ukui-session-tools", {"--shutdown"});
+ }
+ 
+ void MediaKeysManager::doLogoutAction()
+ {
+-    executeCommand("ukui-session-tools","");
++    executeCommand("ukui-session-tools");
+ }
+ 
+ void MediaKeysManager::doPowerOffAction()
+@@ -2023,15 +2008,15 @@ void MediaKeysManager::doPowerOffAction()
+             return;
+         }
+         startTime = QTime::currentTime();
+-
++        QStringList arguments;
+         power_state = powerSettings->getEnum(POWER_BUTTON_KEY);
+         switch (power_state) {
+         case POWER_HIBERNATE:
+-            executeCommand("ukui-session-tools"," --hibernate");
++            arguments << "--hibernate";
+             break;
+         case POWER_INTER_ACTIVE:
+             if(UsdBaseClass::isPowerOff()) {
+-                executeCommand("ukui-session-tools"," --shutdown");
++                arguments << "--shutdown";
+             } else {
+                 bool session = false;
+                 if(sessionSettings->keys().contains(SESSION_WIN_KEY)) {
+@@ -2041,29 +2026,29 @@ void MediaKeysManager::doPowerOffAction()
+                         return;
+                     }
+                 }
+-                executeCommand("ukui-session-tools","");
+             }
+             break;
+         case POWER_SHUTDOWN:
+-            executeCommand("ukui-session-tools"," --shutdown");
++            arguments << "--shutdown";
+             break;
+         case POWER_SUSPEND:
+-            executeCommand("ukui-session-tools"," --suspend");
++            arguments << "--suspend";
+             break;
+         default:
+             USD_LOG(LOG_ERR,"can't parse the power_state:%d",power_state);
+             break;
+         }
++        executeCommand("ukui-session-tools", arguments);
+     }
+ }
+ 
+ 
+ void MediaKeysManager::doOpenHomeDirAction()
+ {
+-    QString homePath;
+-
+-    homePath = QDir::homePath();
+-    executeCommand("peony"," --show-folders " + homePath);
++    QString homePath = QDir::homePath();
++    QStringList arguments;
++    arguments << "--show-folders" << homePath;
++    executeCommand("peony", arguments);
+ }
+ 
+ void MediaKeysManager::doSearchAction()
+@@ -2075,39 +2060,39 @@ void MediaKeysManager::doSearchAction()
+     tool3 = "mate-search-tool";
+ 
+     if(binaryFileExists(tool1)){
+-        executeCommand(tool1,"");
++        executeCommand(tool1);
+     }else if(binaryFileExists(tool2)){
+-        executeCommand(tool2,"");
++        executeCommand(tool2);
+     }else
+-        executeCommand(tool3,"");
++        executeCommand(tool3);
+ }
+ 
+ void MediaKeysManager::doScreensaverAction()
+ {
+     QString tool1,tool2;
+-
+     tool1 = "ukui-screensaver-command";
+     tool2 = "xscreensaver-command";
+ 
+-    if(binaryFileExists(tool1))
+-        executeCommand(tool1," --lock");
+-    else
+-        executeCommand(tool2," --lock");
++    if (binaryFileExists(tool1)) {
++        executeCommand(tool1, {"--lock"});
++    } else {
++        executeCommand(tool2, {"--lock"});
++    }
+ }
+ 
+ void MediaKeysManager::doSettingsAction()
+ {
+-    executeCommand("/usr/bin/ukui-control-center","");
++    executeCommand("/usr/bin/ukui-control-center");
+ }
+ 
+ void MediaKeysManager::doWindowSwitchAction()
+ {
+-    executeCommand("ukui-window-switch"," --show-workspace");
++    executeCommand("ukui-window-switch", {"--show-workspace"});
+ }
+ 
+ void MediaKeysManager::doOpenFileManagerAction()
+ {
+-    executeCommand("peony","");
++    executeCommand("peony");
+ }
+ 
+ void MediaKeysManager::doMediaAction()
+@@ -2123,12 +2108,13 @@ void MediaKeysManager::doOpenCalcAction()
+     tool2 = "mate-calc";
+     tool3 = "gnome-calculator";
+ 
+-    if(binaryFileExists(tool1)){
+-        executeCommand(tool1,"");
+-    }else if(binaryFileExists(tool2)){
+-        executeCommand(tool2,"");
+-    }else
+-        executeCommand(tool3,"");
++    if (binaryFileExists(tool1)) {
++        executeCommand(tool1);
++    } else if (binaryFileExists(tool2)) {
++        executeCommand(tool2);
++    } else {
++        executeCommand(tool3);
++    }
+ }
+ 
+ void MediaKeysManager::doToggleAccessibilityKey(const QString key)
+@@ -2160,16 +2146,18 @@ void MediaKeysManager::doOnScreenKeyboardAction()
+ 
+ void MediaKeysManager::doOpenTerminalAction()
+ {
+-    if(UsdBaseClass::isTablet()) {
+-        executeCommand("mate-terminal","");
++    if (UsdBaseClass::isTablet()) {
++        executeCommand("mate-terminal");
+     } else {
+-        executeCommand("x-terminal-emulator","");
++        executeCommand("x-terminal-emulator");
+     }
+ }
+ 
+ void MediaKeysManager::doScreenshotAction(const QString pramater)
+ {
+-    executeCommand("kylin-screenshot",pramater);
++    QStringList arguments;
++    arguments << pramater;
++    executeCommand("kylin-screenshot", arguments);
+ }
+ 
+ void MediaKeysManager::doSidebarAction()
+@@ -2185,14 +2173,14 @@ void MediaKeysManager::doSidebarAction()
+     QDBusMessage response = QDBusConnection::sessionBus().call(message);
+     if (response.type() != QDBusMessage::ReplyMessage){
+         //兼容ukui-sidebar dbus 接口
+-        executeCommand("ukui-sidebar"," -show");
++        executeCommand("ukui-sidebar", {"-show"});
+ 
+     }
+ }
+ 
+ void MediaKeysManager::doOpenMonitor()
+ {
+-    executeCommand("ukui-system-monitor","");
++    executeCommand("ukui-system-monitor");
+ }
+ void MediaKeysManager::doOpenConnectionEditor()
+ {
+@@ -2203,7 +2191,7 @@ void MediaKeysManager::doOpenConnectionEditor()
+     message<<2;
+     QDBusMessage response = QDBusConnection::sessionBus().call(message);
+     if(response.type() != QDBusMessage::ReplyMessage){
+-        executeCommand("kylin-nm --sw","");
++        executeCommand("kylin-nm", {"--sw"});
+     }
+ }
+ 
+@@ -2227,19 +2215,19 @@ void MediaKeysManager::doOpenUkuiSearchAction()
+ 
+                 QDBusMessage res = QDBusConnection::sessionBus().call(mesg);
+                 if(res.type() != QDBusMessage::ReplyMessage){
+-                    executeCommand("ukui-search"," -s");
++                    executeCommand("ukui-search", {"-s"});
+                 }
+         }
+ }
+ 
+ void MediaKeysManager::doOpenKdsAction()
+ {
+-     executeCommand("ukydisplayswitch","");
++     executeCommand("ukydisplayswitch");
+ }
+ 
+ void MediaKeysManager::doOpenEvolutionAction()
+ {
+-    executeCommand("evolution","");
++    executeCommand("evolution");
+ }
+ 
+ void MediaKeysManager::doWlanAction()
+@@ -2290,12 +2278,12 @@ void MediaKeysManager::doBluetoothAction()
+ 
+ void MediaKeysManager::doOpenKylinCalculator()
+ {
+-    executeCommand("kylin-calculator","");
++    executeCommand("kylin-calculator");
+ }
+ 
+ void MediaKeysManager::doEyeCenterAction()
+ {
+-    executeCommand("eye-protection-center","");
++    executeCommand("eye-protection-center");
+ }
+ 
+ void MediaKeysManager::doUrlAction(const QString scheme)
+diff --git a/plugins/media-keys/mediakey-manager.h b/plugins/media-keys/mediakey-manager.h
+index 5adfc22..6f0d227 100644
+--- a/plugins/media-keys/mediakey-manager.h
++++ b/plugins/media-keys/mediakey-manager.h
+@@ -117,7 +117,7 @@ private:
+     void doMicSoundAction();
+     void doBrightAction(int);
+     void updateDialogForVolume(uint,bool);
+-    void executeCommand(const QString&,const QString&);
++    void executeCommand(const QString& program, const QStringList &arguments = QStringList());
+     void doShutdownAction();
+     void doLogoutAction();
+     void doPowerOffAction();
+diff --git a/ukui-settings-daemon.pro b/ukui-settings-daemon.pro
+index d154e25..32e53ed 100644
+--- a/ukui-settings-daemon.pro
++++ b/ukui-settings-daemon.pro
+@@ -17,7 +17,7 @@ SUBDIRS += \
+     $$PWD/plugins/background/background.pro        \
+     $$PWD/plugins/app-proxy-service/app-proxy-service.pro \
+     $$PWD/plugins/clipboard/clipboard.pro          \
+-    $$PWD/plugins/color/color.pro                  \
++    $$PWD/plugins/gamma-manager/color.pro                  \
+     $$PWD/plugins/housekeeping/housekeeping.pro    \
+     $$PWD/plugins/keyboard/keyboard.pro         \
+     $$PWD/plugins/keybindings/keybindings.pro   \

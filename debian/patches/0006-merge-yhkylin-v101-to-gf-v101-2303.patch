@@ -1,0 +1,4125 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Mon, 29 May 2023 17:20:46 +0800
+Subject: merge yhkylin/v101 to gf/v101-2303
+
+---
+ common/common.pri                                |   7 +-
+ common/touch-calibrate.cpp                       | 364 +++++++++++++++
+ common/touch-calibrate.h                         | 141 ++++++
+ data/org.ukui.peripherals-touchpad.gschema.xml   |   4 +-
+ data/ukui-settings-daemon.desktop                |   1 +
+ plugins/gamma-manager/gamma-manager-helper.cpp   |   9 +-
+ plugins/gamma-manager/gamma-manager-helper.h     |   2 +-
+ plugins/gamma-manager/gamma-manager-location.cpp |   2 +-
+ plugins/gamma-manager/gamma-manager-thread.cpp   |  21 +-
+ plugins/gamma-manager/gamma-manager.cpp          |  17 +-
+ plugins/housekeeping/ldsm-trash-empty.cpp        |   4 +-
+ plugins/housekeeping/usd-ldsm-dialog.cpp         |   8 +-
+ plugins/kds/kdswidget.cpp                        |   1 +
+ plugins/kds/widget.cpp                           |   1 +
+ plugins/media-keys/mediakey-manager.cpp          |   1 +
+ plugins/media-keys/pulseaudiomanager.cpp         | 135 ++++--
+ plugins/media-keys/pulseaudiomanager.h           |  11 +-
+ plugins/mouse/mouse-manager.cpp                  | 160 ++++---
+ plugins/mouse/mouse-manager.h                    |   8 +-
+ plugins/save-param/calibrate-touch-device.cpp    | 378 +---------------
+ plugins/save-param/calibrate-touch-device.h      | 146 ------
+ plugins/save-param/lightdm-config-helper.cpp     |   4 +-
+ plugins/save-param/main.cpp                      |   3 +-
+ plugins/save-param/save-screen.cpp               |  19 +-
+ plugins/xinput/input-monitor.cpp                 | 125 ++++++
+ plugins/xinput/input-monitor.h                   |  51 +++
+ plugins/xinput/monitorinputtask.cpp              | 180 --------
+ plugins/xinput/monitorinputtask.h                | 115 -----
+ plugins/xinput/xinput.pro                        |   4 +-
+ plugins/xinput/xinputmanager.cpp                 | 248 ++---------
+ plugins/xinput/xinputmanager.h                   |  33 +-
+ plugins/xinput/xinputplugin.cpp                  |  16 +-
+ plugins/xrandr/udev-input.cpp                    | 115 -----
+ plugins/xrandr/udev-input.h                      |  48 --
+ plugins/xrandr/xrandr-adaptor.h                  |  13 +
+ plugins/xrandr/xrandr-dbus.cpp                   |  24 +-
+ plugins/xrandr/xrandr-dbus.h                     |   8 +-
+ plugins/xrandr/xrandr-manager.cpp                | 538 ++---------------------
+ plugins/xrandr/xrandr-manager.h                  |  30 +-
+ plugins/xrandr/xrandr.pro                        |   7 +-
+ 40 files changed, 1096 insertions(+), 1906 deletions(-)
+ create mode 100644 common/touch-calibrate.cpp
+ create mode 100644 common/touch-calibrate.h
+ create mode 100644 plugins/xinput/input-monitor.cpp
+ create mode 100644 plugins/xinput/input-monitor.h
+ delete mode 100644 plugins/xinput/monitorinputtask.cpp
+ delete mode 100644 plugins/xinput/monitorinputtask.h
+ delete mode 100644 plugins/xrandr/udev-input.cpp
+ delete mode 100644 plugins/xrandr/udev-input.h
+
+diff --git a/common/common.pri b/common/common.pri
+index 3c720eb..e9ac3d6 100644
+--- a/common/common.pri
++++ b/common/common.pri
+@@ -1,5 +1,5 @@
+ QT += core gui dbus x11extras
+-CONFIG += c++11 no_keywords x11extras debug link_pkgconfig
++CONFIG += c++11 no_keywords x11extras debug link_pkgconfig xrandr
+ CONFIG -= app_bundle
+ 
+ INCLUDEPATH += -I $$PWD/
+@@ -8,7 +8,8 @@ PLUGIN_INSTALL_DIRS = $$[QT_INSTALL_LIBS]/ukui-settings-daemon
+ 
+ EXTRA_CFLAGS +=-Wno-date-time
+ 
+-PKGCONFIG += glib-2.0  gio-2.0 libxklavier x11 xrandr xtst atk gdk-3.0 gtk+-3.0 xi kysdk-sysinfo kysdk-hardware
++PKGCONFIG += glib-2.0  gio-2.0 libxklavier x11 xrandr xtst atk gdk-3.0 gtk+-3.0 xi kysdk-sysinfo kysdk-hardware gudev-1.0
++
+ QMAKE_CXXFLAGS +=  -Wno-unused-parameter
+ SOURCES += \
+         $$PWD/UsdDictionary.cpp \
+@@ -16,6 +17,7 @@ SOURCES += \
+         $$PWD/QGSettings/qconftype.cpp  \
+         $$PWD/QGSettings/qgsettings.cpp \
+         $$PWD/rfkillswitch.cpp \
++        $$PWD/touch-calibrate.cpp \
+         $$PWD/usd_base_class.cpp \
+         $$PWD/xeventmonitor.cpp         \
+         $$PWD/eggaccelerators.c         \
+@@ -29,6 +31,7 @@ HEADERS += \
+         $$PWD/QGSettings/qconftype.h    \
+         $$PWD/QGSettings/qgsettings.h   \
+         $$PWD/rfkillswitch.h \
++        $$PWD/touch-calibrate.h \
+         $$PWD/usd_base_class.h \
+         $$PWD/usd_global_define.h \
+         $$PWD/xeventmonitor.h           \
+diff --git a/common/touch-calibrate.cpp b/common/touch-calibrate.cpp
+new file mode 100644
+index 0000000..d11bdff
+--- /dev/null
++++ b/common/touch-calibrate.cpp
+@@ -0,0 +1,364 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
++ *
++ * Copyright (C) 2023 Tianjin KYLIN Information Technology Co., Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
++ *
++ */
++
++#include "touch-calibrate.h"
++
++extern "C"{
++#include <X11/Xlib.h>
++#include <X11/extensions/XInput2.h>
++#include <X11/extensions/XInput.h>
++#include <X11/extensions/Xrandr.h>
++#include <xorg/xserver-properties.h>
++#include <gudev/gudev.h>
++#include "clib-syslog.h"
++}
++
++
++//尺寸检测
++bool TouchCalibrate::checkMatch(double output_width,  double output_height,
++                double input_width, double input_height)
++{
++    double w_diff, h_diff;
++    w_diff = ABS(1 - (output_width / input_width));
++    h_diff = ABS(1 - (output_height / input_height));
++
++    SYS_LOG(LOG_DEBUG,"w_diff--------%f,h_diff----------%f", w_diff, h_diff);
++    if (w_diff < MAX_SIZE_MATCH_DIFF && h_diff < MAX_SIZE_MATCH_DIFF) {
++        return true;
++    }
++    return false;
++}
++
++//获取设备节点
++QString TouchCalibrate::getDeviceNode(int id)
++{
++    QString node;
++    Atom  prop;
++    Atom act_type;
++    int  act_format;
++    unsigned long nitems, bytes_after;
++    unsigned char *data;
++    prop = XInternAtom(m_display, XI_PROP_DEVICE_NODE, False);
++    if (!prop) {
++        return node;
++    }
++
++    if (XIGetProperty(m_display, id, prop, 0, 1000, False,
++                      AnyPropertyType, &act_type, &act_format, &nitems, &bytes_after, &data) == Success) {
++         node = QString::fromLatin1(reinterpret_cast<char*>(data));
++         XFree(data);
++    }
++    return node;
++}
++//获取触摸设备物理尺寸
++void TouchCalibrate::getTouchSize(const char* node, int& width, int& height)
++{
++    const char *udevSubsystems[] = {"input", NULL};
++    GUdevClient *udevClient = g_udev_client_new(udevSubsystems);
++    if (!udevClient) {
++        SYS_LOG(LOG_DEBUG, " Failed to new udev client.");
++        return;
++    }
++    GUdevDevice *udevDevice = g_udev_client_query_by_device_file(udevClient, node);
++
++    if (g_udev_device_has_property(udevDevice, "ID_INPUT_WIDTH_MM")) {
++        width = g_udev_device_get_property_as_uint64(udevDevice, "ID_INPUT_WIDTH_MM");
++    }
++    if (g_udev_device_has_property(udevDevice, "ID_INPUT_HEIGHT_MM")) {
++        height = g_udev_device_get_property_as_uint64(udevDevice, "ID_INPUT_HEIGHT_MM");
++    }
++    g_clear_object(&udevClient);
++}
++
++TouchCalibrate::TouchCalibrate(const QString& path, QObject *parent)
++    : QObject(parent)
++    , m_display(XOpenDisplay(NULL))
++    , m_touchConfigPath(path)
++{
++
++}
++
++TouchCalibrate::~TouchCalibrate()
++{
++    if (m_display) {
++        XCloseDisplay(m_display);
++    }
++    m_screenInfoMap.clear();
++    m_touchScreenMap.clear();
++    m_tabletMap.clear();
++    m_touchConfigList.clear();
++}
++
++bool TouchCalibrate::initDisplay()
++{
++
++}
++
++//获取屏幕列表
++void TouchCalibrate::getScreenList()
++{
++    int event_base, error_base, major, minor;
++    Window  root;
++    XRRScreenResources *res;
++
++    if (!XRRQueryExtension(m_display, &event_base, &error_base) ||
++        !XRRQueryVersion(m_display, &major, &minor)) {
++        SYS_LOG(LOG_ERR, "RandR extension missing.");
++        return;
++    }
++    root = DefaultRootWindow(m_display);
++    if (major >= 1 && minor >= 5) {
++        res = XRRGetScreenResources(m_display, root);
++        if (!res) {
++            SYS_LOG(LOG_ERR, "get screen resources failed");
++            return;
++        }
++
++        for (int o = 0; o < res->noutput; ++o) {
++            XRROutputInfo *output = XRRGetOutputInfo(m_display, res, res->outputs[o]);
++            if (!output){
++                SYS_LOG(LOG_ERR, "could not get output.");
++                continue;
++            }
++            if (output->connection == RR_Connected) {
++                ScreenInfoPtr screen(new ScreenInfo);
++                screen->name = QString::fromLatin1(output->name);
++                screen->width = output->mm_width;
++                screen->height = output->mm_height;
++                m_screenInfoMap.insert(screen->name, screen);
++                SYS_LOG(LOG_DEBUG, "%s  width : %d height : %d",
++                        screen->name.toLatin1().data(), screen->width, screen->height);
++            }
++            XRRFreeOutputInfo(output);
++        }
++        XRRFreeScreenResources(res);
++    }
++}
++// 获取触摸设备列表
++void TouchCalibrate::getTouchDeviceList()
++{
++    int ndevices;
++    XDeviceInfo* deviceList = XListInputDevices(m_display ,&ndevices);
++    for (int i = 0 ; i < ndevices ; ++i) {
++        XDeviceInfo device = deviceList[i];
++        if (device.type == XInternAtom(m_display, XI_TOUCHSCREEN, False)) {
++            QString node = getDeviceNode(device.id);
++            if (!node.isEmpty()) {
++                TouchDevicePtr dev(new TouchDevice);
++                dev->id = device.id;
++                dev->name = QString::fromLatin1(device.name);
++                dev->node = node;
++                getTouchSize(node.toLatin1().data(), dev->width, dev->height);
++                SYS_LOG(LOG_DEBUG, "%s id : %d node: %s width : %d height : %d",
++                        dev->name.toLatin1().data(), dev->id, dev->node.toLatin1().data(), dev->width, dev->height);
++                m_touchScreenMap.insert(dev->name, dev);
++            }
++        } else if (device.type == XInternAtom(m_display, XI_TABLET, False)) {
++            QString node = getDeviceNode(device.id);
++            if (!node.isEmpty()) {
++                TouchDevicePtr dev(new TouchDevice);
++                dev->id = device.id;
++                dev->name = QString::fromLatin1(device.name);
++                dev->node = node;
++                getTouchSize(node.toLatin1().data(), dev->width, dev->height);
++                SYS_LOG(LOG_DEBUG, "%s id : %d node: %s width : %d height : %d",
++                        dev->name.toLatin1().data(), dev->id, dev->node.toLatin1().data(), dev->width, dev->height);
++                m_tabletMap.insert(dev->name, dev);
++            }
++        }
++    }
++    XFreeDeviceList(deviceList);
++}
++
++//获取触摸配置
++void TouchCalibrate::getTouchConfigure()
++{
++    QFileInfo file(m_touchConfigPath);
++    if(file.exists()) {
++        QSettings *configSettings = new QSettings(m_touchConfigPath, QSettings::IniFormat);
++        int mapNum = configSettings->value("/COUNT/num").toInt();
++        if (mapNum < 1) {
++            return;
++        }
++        for (int i = 0; i < mapNum ;++i) {
++            QString mapName = QString("/MAP%1/%2");
++            QString touchName = configSettings->value(mapName.arg(i+1).arg("name")).toString();
++            if(touchName.isEmpty()) {
++                continue;
++            }
++
++            QString scrname = configSettings->value(mapName.arg(i+1).arg("scrname")).toString();
++            if(scrname.isEmpty()) {
++                continue;
++            }
++
++            QString serial = configSettings->value(mapName.arg(i+1).arg("serial")).toString();
++
++            // serial 不判空，暂不关注，无法通过序列号匹配屏幕
++            TouchConfigPtr touchConfig(new TouchConfig);
++            touchConfig->sTouchName = touchName;
++            touchConfig->sMonitorName = scrname;
++            touchConfig->sTouchSerial = serial;
++            m_touchConfigList.append(touchConfig);
++        }
++        configSettings->deleteLater();
++    }
++}
++
++//进行映射
++void TouchCalibrate::calibrate()
++{
++    if (!m_display) {
++        SYS_LOG(LOG_DEBUG, "Failed to get x display");
++        return;
++    }
++    //获取设备
++    getScreenList();
++    getTouchDeviceList();
++    getTouchConfigure();
++
++    calibrateTouchScreen();
++    calibrateTablet();
++}
++
++//touchscreen
++void TouchCalibrate::calibrateTouchScreen()
++{
++    //首先配置文件映射
++    Q_FOREACH (const TouchConfigPtr& touchConfig, m_touchConfigList) {
++        TouchDevicePtr touch = m_touchScreenMap.value(touchConfig->sTouchName);
++        if (touch.data()) {
++            ScreenInfoPtr screen = m_screenInfoMap.value(touchConfig->sMonitorName);
++            if (screen.data()) {
++                calibrateDevice(touch->id, screen->name);
++                touch->isMapped = true;
++                screen->isMapped = true;
++            }
++        }
++    }
++    //如果配置文件无法覆盖所有的屏幕组合，继续通过比较触摸设备和屏幕物理尺寸进行映射
++    TouchDeviceMap::iterator it_tc = m_touchScreenMap.begin();
++    while (it_tc != m_touchScreenMap.end()) {
++        if (it_tc.value()->isMapped) {
++            ++it_tc;
++            continue;
++        }
++        ScreenInfoMap::iterator it_sc = m_screenInfoMap.begin();
++        while (it_sc != m_screenInfoMap.end()) {
++            if (it_sc.value()->isMapped) {
++                ++it_sc;
++                continue;
++            }
++            if (checkMatch(it_sc.value()->width, it_sc.value()->height, it_tc.value()->width, it_tc.value()->height)) {
++                calibrateDevice(it_tc.value()->id, it_sc.value()->name);
++                it_tc.value()->isMapped = true;
++                it_sc.value()->isMapped = true;
++            }
++            ++it_sc;
++        }
++        ++it_tc;
++    }
++    //通过配置文件，尺寸比较后，仍然无法映射所有触摸设备与屏幕，则对剩下的设备进行随机映射
++    it_tc = m_touchScreenMap.begin();
++    while (it_tc != m_touchScreenMap.end()) {
++        if (it_tc.value()->isMapped) {
++            ++it_tc;
++            continue;
++        }
++        ScreenInfoMap::iterator it_sc = m_screenInfoMap.begin();
++        while (it_sc != m_screenInfoMap.end()) {
++            if (it_sc.value()->isMapped) {
++                ++it_sc;
++                continue;
++            }
++            //此处不再比较触摸设备与屏幕大小，为映射过的设备和屏幕进行随机映射
++            calibrateDevice(it_tc.value()->id, it_sc.value()->name);
++            ++it_sc;
++        }
++        ++it_tc;
++    }
++}
++
++//tablet
++void TouchCalibrate::calibrateTablet()
++{
++    //触摸笔映射，重置屏幕映射
++    ScreenInfoMap::iterator it_sc = m_screenInfoMap.begin();
++    while (it_sc != m_screenInfoMap.end()) {
++        if (it_sc.value()->isMapped) {
++            it_sc.value()->isMapped = false;
++        }
++        ++it_sc;
++    }
++    //触摸笔暂无配置文件，通过比较触摸设备和屏幕物理尺寸进行映射
++    TouchDeviceMap::iterator it_tc = m_tabletMap.begin();
++    while (it_tc != m_tabletMap.end()) {
++        if (it_tc.value()->isMapped) {
++            ++it_tc;
++            continue;
++        }
++        it_sc = m_screenInfoMap.begin();
++        while (it_sc != m_screenInfoMap.end()) {
++            if (it_sc.value()->isMapped) {
++                ++it_sc;
++                continue;
++            }
++            if (checkMatch(it_sc.value()->width, it_sc.value()->height, it_tc.value()->width, it_tc.value()->height)) {
++                calibrateDevice(it_tc.value()->id, it_sc.value()->name);
++                it_tc.value()->isMapped = true;
++                it_sc.value()->isMapped = true;
++            }
++            ++it_sc;
++        }
++        ++it_tc;
++    }
++    //尺寸比较后，仍然无法映射所有触摸设备与屏幕，则对剩下的设备进行随机映射
++    it_tc = m_tabletMap.begin();
++    while (it_tc != m_tabletMap.end()) {
++        if (it_tc.value()->isMapped) {
++            ++it_tc;
++            continue;
++        }
++        it_sc = m_screenInfoMap.begin();
++        while (it_sc != m_screenInfoMap.end()) {
++            if (it_sc.value()->isMapped) {
++                ++it_sc;
++                continue;
++            }
++            //此处不再比较触摸设备与屏幕大小，未映射过的设备和屏幕进行随机映射
++            calibrateDevice(it_tc.value()->id, it_sc.value()->name);
++            ++it_sc;
++        }
++        ++it_tc;
++    }
++}
++
++void TouchCalibrate::calibrateDevice(int id, const QString& output)
++{
++    QStringList arguments;
++    arguments << "--map-to-output" << QString::number(id) << output;
++    QProcess process;
++    process.setProgram("xinput");
++    process.setArguments(arguments);
++    if (!process.startDetached()) {
++        SYS_LOG(LOG_DEBUG, "xinput map to output failed");
++    }
++    SYS_LOG(LOG_DEBUG, "xinput touch device map to output [%d : %s]", id, output.toLatin1().data());
++}
+diff --git a/common/touch-calibrate.h b/common/touch-calibrate.h
+new file mode 100644
+index 0000000..11c2b18
+--- /dev/null
++++ b/common/touch-calibrate.h
+@@ -0,0 +1,141 @@
++/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
++ *
++ * Copyright (C) 2023 Tianjin KYLIN Information Technology Co., Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
++ *
++ */
++
++#ifndef TOUCHCALIBRATE_H
++#define TOUCHCALIBRATE_H
++#include <QObject>
++#include <QSharedPointer>
++#include <QVariant>
++#include <QX11Info>
++#include <QSettings>
++#include <QFileInfo>
++#include <QProcess>
++#include <QDir>
++
++extern "C"{
++#include <X11/Xlib.h>
++}
++
++struct TouchDevice
++{
++    QString name;
++    QString node;
++    int id;
++    int width = 0;
++    int height = 0;
++    bool isMapped = false; //已映射
++};
++
++struct ScreenInfo
++{
++    QString name;
++    int width = 0;
++    int height = 0;
++    bool isMapped = false;
++};
++
++struct TouchConfig
++{
++    QString sTouchName;     //触摸屏的名称
++    QString sTouchSerial;   //触摸屏的序列号
++    QString sMonitorName;   //显示器的名称
++};//配置文件中记录的映射关系信息
++
++typedef QSharedPointer<TouchDevice> TouchDevicePtr;
++typedef QMap<QString, TouchDevicePtr> TouchDeviceMap;
++
++typedef QSharedPointer<ScreenInfo> ScreenInfoPtr;
++typedef QMap<QString, ScreenInfoPtr> ScreenInfoMap;
++
++typedef QSharedPointer<TouchConfig> TouchConfigPtr;
++typedef QList<TouchConfigPtr> TouchConfigList;
++
++class TouchCalibrate : public QObject
++{
++    Q_OBJECT
++public:
++    explicit TouchCalibrate(const QString& path, QObject *parent = nullptr);
++    ~TouchCalibrate();
++
++private:
++    bool initDisplay();
++    /**
++     * @brief 获取已连接屏幕信息
++     */
++    void getScreenList();
++    /**
++     * @brief 获取触摸设备信息
++     */
++    void getTouchDeviceList();
++    /**
++     * @brief 获取屏幕映射信息
++     */
++    void getTouchConfigure();
++
++    /**
++     * @brief touchscreen 映射
++     */
++    void calibrateTouchScreen();
++    /**
++     * @brief tablet 映射
++     */
++    void calibrateTablet();
++    /**
++     * @brief calibrateDevice
++     * @param id 触摸设备ID
++     * @param output 屏幕名称
++     */
++    void calibrateDevice(int id, const QString &output);
++    /**
++     * @brief checkMatch
++     * @param output_width
++     * @param output_height
++     * @param input_width
++     * @param input_height
++     * @return 尺寸比较
++     */
++    bool checkMatch(double output_width, double output_height, double input_width, double input_height);
++    /**
++     * @brief 获取设备节点
++     * @param id
++     * @return
++     */
++    QString getDeviceNode(int id);
++    /**
++     * @brief 获取触摸设备尺寸
++     * @param node
++     * @param width
++     * @param height
++     */
++    void getTouchSize(const char *node, int &width, int &height);
++
++public:
++    void calibrate();
++Q_SIGNALS:
++private:
++    Display *m_display = nullptr;
++    QString m_touchConfigPath;
++    ScreenInfoMap m_screenInfoMap;
++    TouchDeviceMap m_touchScreenMap;
++    TouchDeviceMap m_tabletMap;
++    TouchConfigList m_touchConfigList;
++};
++
++#endif // TOUCHCALIBRATE_H
+diff --git a/data/org.ukui.peripherals-touchpad.gschema.xml b/data/org.ukui.peripherals-touchpad.gschema.xml
+index 38d7bcc..1a015a3 100644
+--- a/data/org.ukui.peripherals-touchpad.gschema.xml
++++ b/data/org.ukui.peripherals-touchpad.gschema.xml
+@@ -77,9 +77,9 @@
+       <description>Swap left and right buttons for left-handed touchpads with 'left', 'right' for right-handed, 'mouse' to follow the mouse setting.</description>
+     </key>
+     <key type="d" name="motion-acceleration">
+-      <default>3</default>
++      <default>6</default>
+       <summary>Motion Acceleration</summary>
+-      <description>Acceleration multiplier for touchpad motion.  A value of 3 is the system default.</description>
++      <description>Acceleration multiplier for touchpad motion.  A value of  is the system default.</description>
+     </key>
+     <key type="i" name="motion-threshold">
+       <default>-1</default>
+diff --git a/data/ukui-settings-daemon.desktop b/data/ukui-settings-daemon.desktop
+index 81e25c9..43efaba 100644
+--- a/data/ukui-settings-daemon.desktop
++++ b/data/ukui-settings-daemon.desktop
+@@ -72,3 +72,4 @@ OnlyShowIn=UKUI;
+ X-UKUI-Autostart-Phase=Initialization
+ X-UKUI-Autostart-Notify=true
+ X-UKUI-AutoRestart=true
++NoDisplay=true
+diff --git a/plugins/gamma-manager/gamma-manager-helper.cpp b/plugins/gamma-manager/gamma-manager-helper.cpp
+index 8561b92..0ac46a9 100644
+--- a/plugins/gamma-manager/gamma-manager-helper.cpp
++++ b/plugins/gamma-manager/gamma-manager-helper.cpp
+@@ -244,9 +244,10 @@ uint GmHelper::getTemperatureWithRgb(const double red, const double green, const
+     return temp;
+ }
+ 
+-void GmHelper::setGammaWithTemp(const uint rtTemp)
++bool GmHelper::setGammaWithTemp(const uint rtTemp)
+ {
+     int size = 0;
++    int ret = true;
+     float gammaRed = 0.f;
+     float gammaGreen = 0.f;
+     float gammaBlue = 0.f;
+@@ -258,7 +259,7 @@ void GmHelper::setGammaWithTemp(const uint rtTemp)
+     m_temperature = rtTemp;
+ 
+     if (rtTemp<COLOR_MIN_TEMPERATURE) {
+-        return;
++        return true;
+     }
+ 
+     getRgbWithTemperature(rtTemp, m_colorRGB);
+@@ -296,6 +297,7 @@ void GmHelper::setGammaWithTemp(const uint rtTemp)
+ 
+         size = XRRGetCrtcGammaSize(QX11Info::display(), outputInfo->crtc);
+         if (!size) {
++            ret = false;
+             USD_LOG(LOG_ERR,"Gamma size is 0.\n");
+             goto FREEOUTPUT;
+         }
+@@ -307,6 +309,7 @@ void GmHelper::setGammaWithTemp(const uint rtTemp)
+          * than 2^16.
+          */
+         if (size > 65536) {
++            ret = false;
+             USD_LOG(LOG_ERR,"Gamma correction table is impossibly large.\n");
+             goto FREEOUTPUT;
+         }
+@@ -366,7 +369,7 @@ void GmHelper::setGammaWithTemp(const uint rtTemp)
+ FREEOUTPUT:
+          XRRFreeOutputInfo(outputInfo);
+     }
+-
++    return ret;
+ }
+ 
+ void GmHelper::freeScreenResource()
+diff --git a/plugins/gamma-manager/gamma-manager-helper.h b/plugins/gamma-manager/gamma-manager-helper.h
+index fd76184..b8c3b72 100644
+--- a/plugins/gamma-manager/gamma-manager-helper.h
++++ b/plugins/gamma-manager/gamma-manager-helper.h
+@@ -148,7 +148,7 @@ public:
+      * @brief setTemperature 设置gamma，便利outputinfo的rtvalue与
+      * @param temp
+      */
+-    void setGammaWithTemp(const uint rtTemp);
++    bool setGammaWithTemp(const uint rtTemp);
+ 
+     /**
+      * @brief freeScreenResource
+diff --git a/plugins/gamma-manager/gamma-manager-location.cpp b/plugins/gamma-manager/gamma-manager-location.cpp
+index a4199ff..5a8d2a5 100644
+--- a/plugins/gamma-manager/gamma-manager-location.cpp
++++ b/plugins/gamma-manager/gamma-manager-location.cpp
+@@ -137,7 +137,7 @@ void GmLocation::doNAMFinished(QNetworkReply *reply)
+         USD_LOG(LOG_DEBUG,"elpased:%d:%s @%d", m_connectTime.msecsTo(stopTime), msg.toLatin1().data(),retryTimes);
+     }  else {
+         m_pTimer->start(1000);
+-        USD_LOG(LOG_DEBUG,"%s %d elpased:%d error!%d",m_connectTime.msecsTo(stopTime),reply->error());
++        USD_LOG(LOG_DEBUG,"elpased:%d error!%d",m_connectTime.msecsTo(stopTime),reply->error());
+     }
+ 
+     if (retryTimes++ > 10) {//
+diff --git a/plugins/gamma-manager/gamma-manager-thread.cpp b/plugins/gamma-manager/gamma-manager-thread.cpp
+index 3eb2ce4..29b3ee8 100644
+--- a/plugins/gamma-manager/gamma-manager-thread.cpp
++++ b/plugins/gamma-manager/gamma-manager-thread.cpp
+@@ -95,6 +95,7 @@ OutputGammaInfoList GmWorkThread::getAllOutputGammaInfo()
+ void GmWorkThread::run()
+ {
+     double frac;
++    int errorTimes = 0;
+     int brightSetCount = 0;
+     int tempSetCount = 0;
+     static int runTimes = 0;
+@@ -108,6 +109,7 @@ void GmWorkThread::run()
+     }
+ 
+     do {
++        errorTimes = 0;
+         tempSetCount = 0;
+         if (isExit){
+             break;
+@@ -141,13 +143,17 @@ void GmWorkThread::run()
+             }
+         }
+ 
+-        m_pGmHelper->setGammaWithTemp(m_rtTemperature);
++        do{
++             msleep(10);
++             errorTimes++;
++        } while (!m_pGmHelper->setGammaWithTemp(m_rtTemperature) && errorTimes < 300);
+         m_lastTemperature = m_rtTemperature;
+         runTimes++;
+         USD_LOG(LOG_DEBUG,"cost time:%d rtTemperature:%d:,runtime:%d,",timerStart.msecsTo(QTime::currentTime()), m_rtTemperature, runTimes);
+         USD_LOG_SHOW_PARAM2(brightSetCount, outputList.count());
+-        msleep(20);
++
+     } while (m_targetTemp != m_rtTemperature || brightSetCount != outputList.count() || tempSetCount != outputList.count());
++
+ }
+ 
+ void GmWorkThread::doAddedScreen(QString outputName)
+@@ -160,23 +166,28 @@ void GmWorkThread::doRemovedScreen(QString outputName)
+     USD_LOG(LOG_DEBUG,"output:%s removed", outputName.toLatin1().data());
+ }
+ 
+-
+ /**
+  * @brief GmWorkThread::doScreenStateChanged
+  * @param outputName
+  * @param state
+- *
++ * 设备
+  */
+ void GmWorkThread::doScreenStateChanged(QString outputName, int state)
+ {
++    USD_LOG(LOG_DEBUG,"%s--->%d", outputName.toLatin1().data(), state);
+     QList<OutputInfo>& outputList = m_pGmHelper->getOutputInfo();
+     for (int var = 0; var < outputList.count(); var++) {
+         if (!outputList[var].name.compare(outputName,Qt::CaseInsensitive)) {
+-            if (state) {//just set gamma when output enable.
++            if (state) {
+                 outputList[var].targetTemp = m_targetTemp;
+ //                outputList[var].rtTemp = COLOR_TEMPERATURE_DEFAULT;
+ //                outputList[var].lastTemp = COLOR_TEMPERATURE_DEFAULT;
+                 this->run();
++            } else {
++                outputList[var].targetTemp = COLOR_TEMPERATURE_DEFAULT;
++                outputList[var].rtTemp = COLOR_TEMPERATURE_DEFAULT;
++                outputList[var].lastTemp = COLOR_TEMPERATURE_DEFAULT;
++                this->run();
+             }
+         }
+     }
+diff --git a/plugins/gamma-manager/gamma-manager.cpp b/plugins/gamma-manager/gamma-manager.cpp
+index 20918db..7d30ee1 100644
+--- a/plugins/gamma-manager/gamma-manager.cpp
++++ b/plugins/gamma-manager/gamma-manager.cpp
+@@ -170,6 +170,9 @@ bool GammaManager::Start()
+ 
+ 
+ 
++
++
++    doColorSettingsChanged("");
+     m_pReckTimer->setSingleShot(false);
+     m_pReckTimer->start(60000);
+     m_pukuiGtkConfig->connectGsettingSignal();
+@@ -568,17 +571,18 @@ int GammaManager::setTemperature(const uint value)
+ 
+ void GammaManager::doQtSettingsChanged(QString key)
+ {
+-    USD_LOG(LOG_DEBUG,".");
++    USD_LOG(LOG_DEBUG,".%s",key.toLatin1().data());
+     if (key == QT_THEME_KEY) {
+         bool isAllDay = m_pColorSettings->get(COLOR_KEY_ALLDAY).toBool();
+         bool isEnable = m_pColorSettings->get(COLOR_KEY_ENABLED).toBool();
+ 
+-        if (m_pQtSettings->get(key).toString() != "ukui-dark") {
+-            if (m_pQtSettings->get(COLOR_KEY_DARK_MODE).toBool()) {
++        if (m_pQtSettings->get(key).toString().compare("ukui-dark",Qt::CaseInsensitive)) {
++            if (m_pColorSettings->get(COLOR_KEY_DARK_MODE).toBool()) {
+                 m_darkModeChangedBySelf = true;
+-                m_pQtSettings->set(COLOR_KEY_STYLE_NAME_DM, m_pQtSettings->get(QT_THEME_KEY).toString());
+-                m_pQtSettings->set(COLOR_KEY_DARK_MODE,false);
+-                m_pQtSettings->apply();
++                m_pColorSettings->set(COLOR_KEY_STYLE_NAME_DM, m_pQtSettings->get(QT_THEME_KEY).toString());
++                m_pColorSettings->set(COLOR_KEY_DARK_MODE,false);
++                m_pColorSettings->apply();
++                USD_LOG(LOG_DEBUG,"leave dark mode",key.toLatin1().data());
+             }
+         }
+ 
+@@ -587,6 +591,7 @@ void GammaManager::doQtSettingsChanged(QString key)
+             m_darkModeChangedBySelf = true;
+             m_pColorSettings->set(COLOR_KEY_DARK_MODE, true);
+             m_pColorSettings->apply();
++            USD_LOG(LOG_DEBUG,"enter dark mode",key.toLatin1().data());
+         }
+     }
+ }
+diff --git a/plugins/housekeeping/ldsm-trash-empty.cpp b/plugins/housekeeping/ldsm-trash-empty.cpp
+index c07ad18..03563b0 100644
+--- a/plugins/housekeeping/ldsm-trash-empty.cpp
++++ b/plugins/housekeeping/ldsm-trash-empty.cpp
+@@ -94,9 +94,9 @@ void LdsmTrashEmpty::windowLayoutInit()
+     second_text->setAlignment(Qt::AlignLeft);
+     second_text->setText(tr("If you choose to empty the trash, all items in it will be permanently lost." \
+                             "Please note that you can also delete them separately."));
+-    cancel->setGeometry(dialog_width-140,dialog_height-45,96,36);
++    cancel->setGeometry(dialog_width-110,dialog_height-50,96,36);
+     cancel->setText(tr("cancel"));
+-    trash_empty->setGeometry(dialog_width-270,dialog_height-45,96,36);
++    trash_empty->setGeometry(dialog_width-240,dialog_height-50,96,36);
+     trash_empty->setText(tr("Empty Trash"));
+     updateText("");
+ }
+diff --git a/plugins/housekeeping/usd-ldsm-dialog.cpp b/plugins/housekeeping/usd-ldsm-dialog.cpp
+index 5efea96..687dc4f 100644
+--- a/plugins/housekeeping/usd-ldsm-dialog.cpp
++++ b/plugins/housekeeping/usd-ldsm-dialog.cpp
+@@ -131,22 +131,22 @@ void LdsmDialog::windowLayoutInit(bool display_baobab)
+     ignore_check_button->setGeometry(70,135,400,30);
+     ignore_check_button->setText(getCheckButtonText());
+ 
+-    ignore_button->setGeometry(dialog_width-110,dialog_height-40,96,36);
++    ignore_button->setGeometry(dialog_width-110,dialog_height-50,96,36);
+     ignore_button->setText(tr("Confirm"));
+ 
+     if(this->has_trash){
+         trash_empty = new QPushButton(this);
+         trash_empty->setProperty("Name", "trash_empty_button");
+-        trash_empty->setGeometry(dialog_width-240,dialog_height-40,96,36);
++        trash_empty->setGeometry(dialog_width-240,dialog_height-50,96,36);
+         trash_empty->setText(tr("Empty Trash"));
+     }
+     if(display_baobab){
+         analyze_button = new QPushButton(this);
+         analyze_button->setText(tr("Examine"));
+         if(this->has_trash)
+-            analyze_button->setGeometry(dialog_width-320,dialog_height-40,96,36);
++            analyze_button->setGeometry(dialog_width-320,dialog_height-50,96,36);
+         else
+-            analyze_button->setGeometry(dialog_width-215,dialog_height-40,96,36);
++            analyze_button->setGeometry(dialog_width-215,dialog_height-50,96,36);
+     }
+     updateText("");
+ }
+diff --git a/plugins/kds/kdswidget.cpp b/plugins/kds/kdswidget.cpp
+index b48f88e..898456f 100644
+--- a/plugins/kds/kdswidget.cpp
++++ b/plugins/kds/kdswidget.cpp
+@@ -64,6 +64,7 @@ KDSWidget::KDSWidget(QWidget *parent) :
+ KDSWidget::~KDSWidget()
+ {
+     delete ui;
++    delete btnsGroup;
+ }
+ 
+ void KDSWidget::beginSetupKF5(){
+diff --git a/plugins/kds/widget.cpp b/plugins/kds/widget.cpp
+index a9ecbee..297c583 100644
+--- a/plugins/kds/widget.cpp
++++ b/plugins/kds/widget.cpp
+@@ -75,6 +75,7 @@ Widget::~Widget()
+ {
+     delete ui;
+     delete m_scaleSetting;
++    delete btnsGroup;
+ }
+ 
+ void Widget::screensParamChangedSignal(QString screensParam)
+diff --git a/plugins/media-keys/mediakey-manager.cpp b/plugins/media-keys/mediakey-manager.cpp
+index b894712..80492a6 100644
+--- a/plugins/media-keys/mediakey-manager.cpp
++++ b/plugins/media-keys/mediakey-manager.cpp
+@@ -1182,6 +1182,7 @@ void MediaKeysManager::initPuseAudioManager()
+ {
+     connect(mpulseAudioManager, &PulseAudioManager::sinkVolumeChanged, this, &MediaKeysManager::sinkVolumeSlot, Qt::AutoConnection);
+     connect(mpulseAudioManager, &PulseAudioManager::sinkMuteChanged, this, &MediaKeysManager::sinkMuteSlot, Qt::AutoConnection);
++    mpulseAudioManager->connectPulseContext();
+ }
+ 
+ void MediaKeysManager::initScreens()
+diff --git a/plugins/media-keys/pulseaudiomanager.cpp b/plugins/media-keys/pulseaudiomanager.cpp
+index 4847be7..4f92c53 100644
+--- a/plugins/media-keys/pulseaudiomanager.cpp
++++ b/plugins/media-keys/pulseaudiomanager.cpp
+@@ -19,17 +19,14 @@
+ 
+ #include "pulseaudiomanager.h"
+ #include <QDebug>
++#include <QMutexLocker>
+ 
+ #define VOLMUE_NORMAL 100.0f
+ 
+ #define MIN_VOLUME PA_VOLUME_NORM/500
+ 
+-PulseAudioManager* PulseAudioManager::s_pulseAudioManager = nullptr;
+-
+ PulseAudioManager::PulseAudioManager(QObject *parent) : QObject(parent)
+ {
+-    connectPulseContext();
+-    s_pulseAudioManager = this;
+ }
+ 
+ PulseAudioManager::~PulseAudioManager()
+@@ -53,48 +50,66 @@ PulseAudioManager::~PulseAudioManager()
+ 
+ void PulseAudioManager::serverInfoCallback(pa_context *c, const pa_server_info *i, void *data)
+ {
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
+     if(c && i) {
+-        s_pulseAudioManager->m_defaultSinkName = i->default_sink_name;
+-        s_pulseAudioManager->m_defaultSourceName = i->default_source_name;
+-        pa_context_get_sink_info_by_name(c, s_pulseAudioManager->m_defaultSinkName, sinkInfoCallback, data);
+-        pa_context_get_source_info_by_name(c, s_pulseAudioManager->m_defaultSourceName, sourceInfoCallback, data);
++        USD_LOG(LOG_DEBUG, "server info sink : %s  , source :%s", i->default_sink_name, i->default_source_name);
++        pa->m_defaultSinkName = QString::fromLatin1(i->default_sink_name);
++        pa->m_defaultSourceName = QString::fromLatin1(i->default_source_name);
++        pa_context_get_sink_info_by_name(c, pa->m_defaultSinkName.toLatin1().data(), sinkInfoCallback, data);
++        pa_context_get_source_info_by_name(c, pa->m_defaultSourceName.toLatin1().data(), sourceInfoCallback, data);
+     }
+ }
+ 
+ void PulseAudioManager::subscribeCallback(pa_context *c, pa_subscription_event_type_t type, uint32_t idx, void *data)
+ {
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
++    pa_operation *o;
+     switch (type & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) {
+-        case PA_SUBSCRIPTION_EVENT_SINK:
+-        case PA_SUBSCRIPTION_EVENT_SOURCE:
+-            pa_operation *o;
+-            if (!(o = pa_context_get_server_info(c, serverInfoCallback, data))) {
+-                USD_LOG(LOG_WARNING,"pa_operation : get server info failed");
+-                return;
+-            }
+-            pa_operation_unref(o);
++    case PA_SUBSCRIPTION_EVENT_SINK:
++        if (!(o = pa_context_get_sink_info_by_index(c, idx, &PulseAudioManager::sinkInfoCallback, data))) {
+             break;
+-        case PA_SUBSCRIPTION_EVENT_SINK_INPUT:
++        }
++        pa_operation_unref(o);
++        break;
++    case PA_SUBSCRIPTION_EVENT_SOURCE:
++        if (!(o = pa_context_get_source_info_by_index(c, idx, &PulseAudioManager::sourceInfoCallback, data))) {
+             break;
+-        default:
++        }
++        pa_operation_unref(o);
++        break;
++    case PA_SUBSCRIPTION_EVENT_SERVER:
++        if (!(o = pa_context_get_server_info(pa->m_paContext, &PulseAudioManager::serverInfoCallback, data))) {
++            USD_LOG(LOG_WARNING,"pa_operation : get server info failed");
+             break;
+-       }
++        }
++        pa_operation_unref(o);
++        break;
++    default:
++        break;
++    }
+ }
+ 
+ void PulseAudioManager::contextStateCallback(pa_context *c, void *data)
+ {
+-    assert(c && data);
+-    switch (pa_context_get_state(c)) {
++//    assert(c && data);
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
++    int state = pa_context_get_state(c);
++    switch (state) {
+     case PA_CONTEXT_READY:
++    {
+         pa_operation *o;
+-        USD_LOG(LOG_DEBUG, "PA_CONTEXT_READY");
+-        pa_context_get_server_info(c, serverInfoCallback, data);
+-        pa_context_set_subscribe_callback(c, subscribeCallback, data);
+-        if (!(o = pa_context_subscribe(c, (pa_subscription_mask_t)(PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE), nullptr, nullptr))) {
+-            USD_LOG(LOG_WARNING,"pa_context_subscribe error .");
+-            break;
+-        }//订阅pa_context 事件
++        o = pa_context_subscribe(pa->m_paContext,
++                                (pa_subscription_mask_t)
++                                (PA_SUBSCRIPTION_MASK_SINK |
++                                 PA_SUBSCRIPTION_MASK_SOURCE |
++                                 PA_SUBSCRIPTION_MASK_SERVER),
++                                 &PulseAudioManager::sucessCallback, data);
++        pa_operation_unref(o);
++
++        o = pa_context_get_server_info(pa->m_paContext, serverInfoCallback, data);
+         pa_operation_unref(o);
+         break;
++    }
+     case PA_CONTEXT_FAILED:
+         USD_LOG(LOG_WARNING, "PA_CONTEXT_FAILED");
+         break;
+@@ -106,6 +121,12 @@ void PulseAudioManager::contextStateCallback(pa_context *c, void *data)
+     }
+ }
+ 
++void PulseAudioManager::sucessCallback(pa_context *c, int success, void *data)
++{
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
++    pa_threaded_mainloop_signal(pa->m_paThreadMainLoop, 0);
++}
++
+ void PulseAudioManager::connectPulseContext()
+ {
+     if(!(m_paThreadMainLoop = pa_threaded_mainloop_new())){
+@@ -119,34 +140,49 @@ void PulseAudioManager::connectPulseContext()
+         return;
+     }
+ 
+-    if(!(m_paContext = pa_context_new(m_paMainloopApi, nullptr))){
+-        USD_LOG(LOG_WARNING,"new m_paContext failed");
+-    }
++    pa_threaded_mainloop_lock(m_paThreadMainLoop);
++
++    pa_proplist* plist = pa_proplist_new();
++    pa_proplist_sets(plist, PA_PROP_APPLICATION_ID, "ukui-settings-daemon");
++    pa_proplist_sets(plist, PA_PROP_APPLICATION_NAME, "ukui-settings-daemon");
++    m_paContext = pa_context_new_with_proplist(m_paMainloopApi, nullptr, plist);
++    pa_proplist_free(plist);
++
++    pa_context_set_state_callback(m_paContext, &PulseAudioManager::contextStateCallback, this);
++    pa_context_set_subscribe_callback(m_paContext, &PulseAudioManager::subscribeCallback, this);
+ 
+     if(pa_context_connect(m_paContext, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0){
+         qDebug()<<"pa_context_connect";
+         USD_LOG(LOG_WARNING,"connect pa_context failed");
+     }
+-    pa_context_set_state_callback(m_paContext, contextStateCallback, m_paMainloopApi);
+ 
+     if(pa_threaded_mainloop_start(m_paThreadMainLoop) < 0){
+         USD_LOG(LOG_WARNING,"pa_threaded_mainloop_start failed");
+     }
++
++    pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+ 
+ void PulseAudioManager::sinkInfoCallback(pa_context *c, const pa_sink_info *si, int eol, void *data)
+ {
+-    s_pulseAudioManager->updateSinkInfo(si);
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
++    if (!eol) {
++        pa->updateSinkInfo(si);
++    }
+ }
+ 
+ void PulseAudioManager::sourceInfoCallback(pa_context *c, const pa_source_info *so, int eol, void *data)
+ {
+-    s_pulseAudioManager->updateSourceInfo(so);
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
++    if (!eol) {
++        pa->updateSourceInfo(so);
++    }
+ }
+ 
+ void PulseAudioManager::updateSinkInfo(const pa_sink_info* si)
+ {
+-    if(si){
++    QMutexLocker locker(&m_mutex);
++    if (m_defaultSinkName == QString::fromLatin1(si->name)) {
+         if(m_realSinkVolume != pa_cvolume_max(&(si->volume))){
+             m_realSinkVolume = pa_cvolume_max(&(si->volume));
+             m_sinkVolume = volForPulseVol(pa_cvolume_max(&(si->volume)));
+@@ -156,18 +192,19 @@ void PulseAudioManager::updateSinkInfo(const pa_sink_info* si)
+             m_sinkMute = si->mute;
+             Q_EMIT sinkMuteChanged(m_sinkMute);
+         }
++        USD_LOG(LOG_DEBUG, "update sink info volume is %d", m_sinkVolume);
+         m_sinkChannels = si->volume.channels;
+         m_channelMap = si->channel_map;
+         m_balance = pa_cvolume_get_balance(&si->volume,&si->channel_map);
+     } else {
+-        USD_LOG(LOG_DEBUG,"updateSinkInfo si is null");
+-
++        USD_LOG(LOG_DEBUG,"we don't care beacuse sink name is not default");
+     }
+ }
+ 
+ void PulseAudioManager::updateSourceInfo(const pa_source_info* so)
+ {
+-    if(so){
++    QMutexLocker locker(&m_mutex);
++    if (m_defaultSourceName == QString::fromLatin1(so->name)) {
+         if(m_sourceMute != so->mute){
+             m_sourceMute = so->mute;
+         }
+@@ -186,9 +223,11 @@ uint32_t PulseAudioManager::volForPulseVol(int value)
+ 
+ void PulseAudioManager::setSinkVolume(int value)
+ {
++
+     if(m_sinkVolume == value){
+         return;
+     }
++    pa_threaded_mainloop_lock(m_paThreadMainLoop);
+     pa_operation* o;
+     pa_cvolume volmue;
+     volmue.channels = m_sinkChannels;
+@@ -199,36 +238,38 @@ void PulseAudioManager::setSinkVolume(int value)
+     if(m_balance != 0) {
+         pa_cvolume_set_balance(&volmue, &m_channelMap, m_balance);
+     }
+-    if(!(o = pa_context_set_sink_volume_by_name(m_paContext, s_pulseAudioManager->m_defaultSinkName, &volmue, nullptr, nullptr))) {
++    if(!(o = pa_context_set_sink_volume_by_name(m_paContext, m_defaultSinkName.toLatin1().data(), &volmue, nullptr, nullptr))) {
+         USD_LOG(LOG_WARNING,"pa_operation : set sink volume failed");
+         return;
+     }
+     pa_operation_unref(o);
++    pa_threaded_mainloop_unlock(m_paThreadMainLoop);
++
+ }
+ 
+ void PulseAudioManager::setSinkMute(bool mute)
+ {
+-    if(m_sinkMute == mute){
+-        return;
+-    }
++    pa_threaded_mainloop_lock(m_paThreadMainLoop);
+     pa_operation* o;
+-    if(!(o = pa_context_set_sink_mute_by_name(m_paContext, m_defaultSinkName, mute, nullptr, nullptr))) {
++    if(!(o = pa_context_set_sink_mute_by_name(m_paContext, m_defaultSinkName.toLatin1().data(), mute, nullptr, nullptr))) {
+         USD_LOG(LOG_WARNING,"pa_operation : set sink mute failed");
+         return;
+     }
+     pa_operation_unref(o);
++    pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+ 
+ void PulseAudioManager::setSourceMute(bool mute)
+ {
+-    if(m_sourceMute == mute){
+-        return;
+-    }
++    pa_threaded_mainloop_lock(m_paThreadMainLoop);
++
+     pa_operation* o;
+-    if(!(o = pa_context_set_source_mute_by_name(m_paContext, m_defaultSourceName, mute, nullptr, nullptr))) {
++    if(!(o = pa_context_set_source_mute_by_name(m_paContext, m_defaultSourceName.toLatin1().data(), mute, nullptr, nullptr))) {
+         USD_LOG(LOG_WARNING,"pa_operation : set source mute failed");
+         return;
+     }
+     pa_operation_unref(o);
++    pa_threaded_mainloop_unlock(m_paThreadMainLoop);
++
+ }
+ 
+diff --git a/plugins/media-keys/pulseaudiomanager.h b/plugins/media-keys/pulseaudiomanager.h
+index 24d5012..538fc85 100644
+--- a/plugins/media-keys/pulseaudiomanager.h
++++ b/plugins/media-keys/pulseaudiomanager.h
+@@ -25,6 +25,7 @@
+ #include <pulse/error.h>
+ #include <pulse/pulseaudio.h>
+ #include <pulse/simple.h>
++#include <QMutex>
+ 
+ extern "C" {
+     #include "clib-syslog.h"
+@@ -52,13 +53,13 @@ public:
+     QString getSinkName(){return m_defaultSinkName;}
+     QString getSourceName(){return m_defaultSinkName;}
+ 
++    void connectPulseContext();     //链接pulse 上下文
+ private:
+     inline uint32_t volToPulseVol(int value);
+     inline uint32_t volForPulseVol(int value);
+ 
+ 
+ protected:
+-    void connectPulseContext();     //链接pulse 上下文
+ 
+     static void sinkInfoCallback(pa_context *c, const pa_sink_info *i, int eol, void *data);
+     static void sourceInfoCallback(pa_context *c, const pa_source_info *so, int eol, void *data);
+@@ -66,6 +67,7 @@ protected:
+ 
+     static void subscribeCallback(pa_context *c, pa_subscription_event_type_t type, uint32_t idx, void *data);
+     static void contextStateCallback(pa_context *c, void *data);
++    static void sucessCallback(pa_context *c, int success, void *data);
+ private:
+     pa_threaded_mainloop *m_paThreadMainLoop;
+     pa_context *m_paContext;
+@@ -78,12 +80,11 @@ private:
+     int m_realSinkVolume;       //pulseaudio 内的音量值 131~65536
+     bool m_sourceMute;          //输入设备静音
+ 
+-    const char* m_defaultSinkName;
+-    const char* m_defaultSourceName;
++    QString m_defaultSinkName;
++    QString m_defaultSourceName;
+ 
+     float m_balance = 0.0f;
+-
+-    static PulseAudioManager* s_pulseAudioManager;
++    QMutex m_mutex;
+ 
+ Q_SIGNALS:
+     void sinkVolumeChanged(int);
+diff --git a/plugins/mouse/mouse-manager.cpp b/plugins/mouse/mouse-manager.cpp
+index 4244c86..ea6add5 100644
+--- a/plugins/mouse/mouse-manager.cpp
++++ b/plugins/mouse/mouse-manager.cpp
+@@ -82,7 +82,6 @@ MouseManager * MouseManager::mMouseManager =nullptr;
+ MouseManager::MouseManager(QObject *parent) : QObject (parent)
+ {
+     gdk_init(NULL,NULL);
+-    m_imwheelTimer = new QTimer(this);
+     syndaemon_spawned = false;
+     syndaemon_pid   = 0;
+     locate_pointer_spawned = false;
+@@ -90,40 +89,6 @@ MouseManager::MouseManager(QObject *parent) : QObject (parent)
+     imwheelSpawned  = false;
+     settings_mouse  = new QGSettings(UKUI_MOUSE_SCHEMA);
+     settings_touchpad = new QGSettings(UKUI_TOUCHPAD_SCHEMA);
+-    m_imwheelTimer->setSingleShot(false);
+-    m_imwheelTimer->start(12*1000);
+-    m_isRmeetingRun = true;
+-
+-    connect(m_imwheelTimer, &QTimer::timeout, this, [=](){
+-        bool ret = CheckProcessAlive("Rmeet");
+-        if (m_isRmeetingRun != ret) {
+-            GPid pid;
+-            GError *error = NULL;
+-            char **args;
+-            int    argc;
+-
+-            m_isRmeetingRun = ret;
+-            QString str="";
+-            if (m_isRmeetingRun) {
+-                str = "killall imwheel";
+-                USD_LOG(LOG_DEBUG,"stop imwheel");
+-            } else {
+-                str = "/usr/bin/imwheel -k -b \"4 5\"";
+-                USD_LOG(LOG_DEBUG,"start imwheel");
+-            }
+-            if( g_shell_parse_argv (str.toLatin1().data(), &argc, &args, NULL)){
+-                g_spawn_async (g_get_home_dir (),
+-                               args,
+-                               NULL,
+-                               G_SPAWN_SEARCH_PATH,
+-                               NULL,
+-                               NULL,
+-                               &pid,
+-                               &error);
+-            }
+-        }
+-
+-    });
+ }
+ MouseManager::~MouseManager()
+ {
+@@ -132,10 +97,6 @@ MouseManager::~MouseManager()
+     if(time) {
+         delete time;
+     }
+-
+-    if (m_imwheelTimer) {
+-        delete m_imwheelTimer;
+-    }
+ }
+ 
+ MouseManager * MouseManager::MouseManagerNew()
+@@ -249,6 +210,15 @@ XDevice* device_is_touchpad (XDeviceInfo *deviceinfo)
+     return NULL;
+ }
+ 
++bool device_is_mouse(XDeviceInfo *deviceinfo)
++{
++    XDevice *device = nullptr;
++    if ((deviceinfo->type == XInternAtom(QX11Info::display(), XI_MOUSE, False)) && !strstr(deviceinfo->name, "PS\/2")) {
++        return true;
++    }
++    return false;
++}
++
+ bool touchpad_is_present (void)
+ {
+     XDeviceInfo *device_info;
+@@ -294,6 +264,7 @@ bool MouseManager::GetTouchpadHandedness (bool  mouse_left_handed)
+     case TOUCHPAD_HANDEDNESS_MOUSE:
+             return mouse_left_handed;
+     default:
++        return false;
+             g_assert_not_reached ();
+     }
+ }
+@@ -855,7 +826,7 @@ void MouseManager::SetMotionLegacyDriver (XDeviceInfo     *device_info)
+     /* And threshold */
+     motion_threshold = settings->get(KEY_MOTION_THRESHOLD).toInt();
+ //    qDebug()<<__func__<<" motion_threshold = "<<motion_threshold;
+-    USD_LOG(LOG_DEBUG,"motion_threshold:%d", motion_threshold);
++//    USD_LOG(LOG_DEBUG,"motion_threshold:%d", motion_threshold);
+     /* Get the list of feedbacks for the device */
+     states = XGetFeedbackControl (dpy, device, &num_feedbacks);
+     if (states == NULL) {
+@@ -1160,7 +1131,7 @@ void MouseManager::SetLocatePointer (bool     state)
+     }
+ }
+ 
+-void MouseManager::SetMouseWheelSpeed (int speed)
++void MouseManager::SetMouseWheelSpeedByImwheel(int speed)
+ {
+     if(speed <= 0)
+           return;
+@@ -1193,16 +1164,6 @@ void MouseManager::SetMouseWheelSpeed (int speed)
+     GError *error = NULL;
+     char **args;
+     int    argc;
+-
+-    if (m_isRmeetingRun == true) {
+-        USD_LOG(LOG_DEBUG,"break....");
+-        return;
+-    }
+-//    if (imwheelSpawned){
+-//        QProcess::execute("killall imwheel");
+-//        imwheelSpawned = false;
+-//    }
+-
+     QString str = "/usr/bin/imwheel -k -b \"4 5\"";
+     if( g_shell_parse_argv (str.toLatin1().data(), &argc, &args, NULL)){
+         g_spawn_async (g_get_home_dir (),
+@@ -1220,6 +1181,91 @@ void MouseManager::SetMouseWheelSpeed (int speed)
+     g_strfreev (args);
+ }
+ 
++void MouseManager::SetMouseWheelSpeedByLibinput(XDeviceInfo *device_info)
++{
++    XDevice *device;
++    Atom prop;
++    Atom type;
++    Atom float_type;
++    int format, rc;
++    unsigned long nitems, bytes_after;
++
++    Display * dpy = QX11Info::display();
++    union {
++        unsigned char *c;
++        long *l;
++    } data;
++
++    float_type = property_from_name ("FLOAT");
++    if (!float_type) {
++        USD_LOG(LOG_WARNING,"property name to atom is failed");
++        return;
++    }
++
++    prop = property_from_name ("libinput Button Scrolling Speed");
++    if (!prop) {
++        USD_LOG(LOG_WARNING,"property name to atom is failed");
++        return;
++    }
++    try {
++        device = XOpenDevice (dpy, device_info->id);
++        if (device == NULL) {
++            USD_LOG(LOG_WARNING,"error : xopen device is failed");
++            return;
++        }
++        float speed = settings_mouse->get(KEY_MOUSE_WHEEL_SPEED).toFloat();
++        USD_LOG(LOG_DEBUG,"set mouse speed %f",speed);
++        rc = XGetDeviceProperty (dpy,device, prop, 0, 1, False, float_type, &type,
++                                 &format, &nitems, &bytes_after, &data.c);
++
++        if (rc == Success && type == float_type && format == 32 && nitems >= 1) {
++                *(float *) data.l = speed;
++                XChangeDeviceProperty (dpy, device, prop, float_type, 32,
++                                       PropModeReplace, data.c, nitems);
++        }
++        if (rc == Success) {
++                XFree (data.c);
++        }
++        XCloseDevice (dpy, device);
++
++    } catch (int x) {
++        USD_LOG(LOG_ERR,"catch a bug...");
++        return;
++    }
++}
++
++void MouseManager::SetMouseWheelSpeed(XDeviceInfo *device_info)
++{
++    if (query_device_had_property(device_info, "libinput Button Scrolling Speed")) {
++        QProcess::startDetached("imwheel -kq");
++        m_findScrollSpeed = true;
++        SetMouseWheelSpeedByLibinput(device_info);
++    } else if(!m_findScrollSpeed) {
++        SetMouseWheelSpeedByImwheel(settings_mouse->get(KEY_MOUSE_WHEEL_SPEED).toInt());
++    }
++}
++
++void MouseManager::SetMouseWheelSpeedAll()
++{
++    XDeviceInfo *device_info = nullptr;
++    int n_devices;
++    device_info = XListInputDevices (gdk_x11_get_default_xdisplay (), &n_devices);
++    if(!device_info){
++        qWarning("SetMotionAll: device_info is null");
++        return;
++    }
++    m_findScrollSpeed = false;
++    for (int i = 0; i < n_devices; i++) {
++        if (device_is_mouse(&device_info[i])) {
++            SetMouseWheelSpeed(&device_info[i]);
++        }
++    }
++    if (!device_info) {
++        XFreeDeviceList (device_info);
++    }
++}
++
++
+ void MouseManager::MouseCallback (QString keys)
+ {
+     if (keys.compare(QString::fromLocal8Bit(KEY_LEFT_HANDED))==0){
+@@ -1237,7 +1283,7 @@ void MouseManager::MouseCallback (QString keys)
+     } else if (keys.compare(QString::fromLocal8Bit(KEY_MOUSE_LOCATE_POINTER))==0){
+         SetLocatePointer (settings_mouse->get(keys).toBool());
+     } else if(keys.compare(QString::fromLocal8Bit(KEY_MOUSE_WHEEL_SPEED)) == 0 ) {
+-        SetMouseWheelSpeed (settings_mouse->get(keys).toInt());
++        SetMouseWheelSpeedAll();
+     } else if (keys.compare(QString::fromLocal8Bit(KEY_MOUSE_NATRUAL_SCROLLING)) == 0){
+         SetNaturalScrollAll(false);
+     } else{
+@@ -1749,13 +1795,11 @@ void SetPlugMouseDisbleTouchpad(QGSettings *settings)
+     if(checkMouseExists()) {
+        bool state = settings->get(KEY_TOUCHPAD_DISBLE_O_E_MOUSE).toBool();
+         if(state){//如果开启插入鼠标禁用触摸板，则直接修改触摸板状态
+-            SetTouchpadEnabledAll(!state);
+-        } else {//如果没有开启插入鼠标禁用触摸板，则根据触摸板总开关的状态，设置触摸板的enable状态
+-            SetTouchpadEnabledAll(settings->get(KEY_TOUCHPAD_ENABLED).toBool());
++            settings->set(KEY_TOUCHPAD_ENABLED, false);
++            return;
+         }
+-    } else {
+-        SetTouchpadEnabledAll(settings->get(KEY_TOUCHPAD_ENABLED).toBool());
+     }
++    settings->set(KEY_TOUCHPAD_ENABLED, true);
+ }
+ 
+ void SetTouchpadDoubleClick(XDeviceInfo *device_info, bool state)
+@@ -1927,7 +1971,7 @@ void MouseManager::SetMouseSettings ()
+     SetNaturalScrollAll (false);
+     SetMotionAll (false);
+     SetMiddleButtonAll (settings_mouse->get(KEY_MIDDLE_BUTTON_EMULATION).toBool());
+-    SetMouseWheelSpeed (settings_mouse->get(KEY_MOUSE_WHEEL_SPEED).toInt());
++    SetMouseWheelSpeedAll();
+     SetPlugMouseDisbleTouchpad(settings_touchpad);
+ 
+ }
+diff --git a/plugins/mouse/mouse-manager.h b/plugins/mouse/mouse-manager.h
+index 7ac8ab4..e254870 100644
+--- a/plugins/mouse/mouse-manager.h
++++ b/plugins/mouse/mouse-manager.h
+@@ -95,7 +95,10 @@ public:
+     void setNaturalScrollLibinput (XDeviceInfo *device_info,bool isTouchPad);
+ 
+     void SetDevicepresenceHandler ();
+-    void SetMouseWheelSpeed (int speed);
++    void SetMouseWheelSpeedAll();
++    void SetMouseWheelSpeed(XDeviceInfo *device_info);
++    void SetMouseWheelSpeedByLibinput(XDeviceInfo* device_info);
++    void SetMouseWheelSpeedByImwheel(int speed);
+     void SetMouseSettings();
+     void SetTouchSettings();
+ private: 
+@@ -117,9 +120,8 @@ private:
+     gboolean locate_pointer_spawned;
+     GPid     locate_pointer_pid;
+     bool     imwheelSpawned;
+-    QTimer *m_imwheelTimer;
+-    bool m_isRmeetingRun;
+     static MouseManager *mMouseManager;
++    bool    m_findScrollSpeed = false;
+ };
+ 
+ #endif // MOUSEMANAGER_H
+diff --git a/plugins/save-param/calibrate-touch-device.cpp b/plugins/save-param/calibrate-touch-device.cpp
+index 6ee9c42..b67b0fd 100644
+--- a/plugins/save-param/calibrate-touch-device.cpp
++++ b/plugins/save-param/calibrate-touch-device.cpp
+@@ -23,9 +23,11 @@
+ #include <QDir>
+ 
+ #include "calibrate-touch-device.h"
++#include "touch-calibrate.h"
+ #include "clib-syslog.h"
+-
++#include <QTimer>
+ #define MAP_CONFIG "touchcfg.ini"
++
+ CalibrateTouchDevice::CalibrateTouchDevice(QObject *parent)
+ {
+ 
+@@ -43,369 +45,15 @@ void CalibrateTouchDevice::setUserName(QString userName)
+ 
+ void CalibrateTouchDevice::calibration()
+ {
+-    if(!initXparam()) {
+-        SYS_LOG(LOG_DEBUG,"open xorg error!");
+-        return;
+-    }
+-
+     QString configPath = QString("/var/lib/lightdm-data/%1/usd/config/%2").arg(m_userName).arg(QString::fromLatin1(MAP_CONFIG));
+-    QFileInfo file(configPath);
+-
+-    m_touchSceenMap = getAllTouchScreens();
+-    m_outputMap = getAllOutput();
+-
+-    if(file.exists()) {
+-        m_mapRelationList = getMapInfoListFromConfig(configPath);
+-        calibrateTouchDeviceWithConfigFile(configPath);
+-    } else {
+-        USD_LOG(LOG_DEBUG,"can't find %s",configPath.toLatin1().data());
+-    }
+-    calibrateTouchScreen();
+-//    exit(0);
+-    Q_EMIT calibrateFinished();
+-}
+-
+-int CalibrateTouchDevice::initXparam()
+-{
+-    int eventBase = 0;
+-    int errorBase = 0;
+-    int major = 0;
+-    int minor = 0;
+-
+-    m_pDpy = XOpenDisplay (m_pDisplayName);
+-    if (m_pDpy == NULL) {
+-        SYS_LOG(LOG_DEBUG,"XOpenDisplay fail...");
+-        return false;
+-    }
+-
+-    if (!XRRQueryExtension (m_pDpy, &eventBase, &errorBase) ||
+-            !XRRQueryVersion (m_pDpy, &major, &minor)) {
+-        SYS_LOG(LOG_DEBUG, "RandR extension missing");
+-        return false;
+-    }
+-
+-    if (!(major >= 1 && minor >= 5)) {
+-        SYS_LOG(LOG_DEBUG, "xrandr extension too low");
+-    }
+-
+-    m_screen = DefaultScreen(m_pDpy);
+-    if (m_screen >= ScreenCount (m_pDpy)) {
+-        SYS_LOG(LOG_DEBUG,"Invalid screen number %d (display has %d)",m_screen, ScreenCount(m_pDpy));
+-        return false;
+-    }
+-
+-    m_rootWindow = RootWindow(m_pDpy, m_screen);
+-
+-    m_pScreenRes = XRRGetScreenResources(m_pDpy, m_rootWindow);
+-    if (NULL == m_pScreenRes) {
+-        SYS_LOG(LOG_DEBUG,"could not get screen resources",m_screen, ScreenCount(m_pDpy));
+-        return false;
+-    }
+-
+-    if (m_pScreenRes->noutput == 0) {
+-        SYS_LOG(LOG_DEBUG, "noutput is 0!!");
+-        return false;
+-    }
+-
+-    SYS_LOG(LOG_DEBUG,"initXparam success");
+-
+-    for (int k = 0; k < m_pScreenRes->noutput; k++) {
+-        USD_LOG(LOG_DEBUG,"k:%d --->%d",k, m_pScreenRes->outputs[k]);
+-    }
+-
+-
+-    for (int k = 0; k < m_pScreenRes->ncrtc; k++) {
+-        USD_LOG(LOG_DEBUG,"crtc:%d --->%d",k, m_pScreenRes->crtcs[k]);
+-    }
+-
+-    return true;
+-}
+-
+-bool CalibrateTouchDevice::checkMatch(double opWidth,  double opHeight,double ipWidth, double ipHeight)
+-{
+-    double wdiff, hdiff;
+-
+-    wdiff = ABS(1 - (opWidth / ipWidth));
+-    hdiff = ABS(1 - (opHeight / ipHeight));
+-    USD_LOG(LOG_DEBUG,"w_diff--------%f,h_diff----------%f",wdiff,hdiff);
+-
+-    if (wdiff < MAX_SIZE_MATCH_DIFF && hdiff < MAX_SIZE_MATCH_DIFF) {
+-        return true;
+-    }
+-    return false;
+-}
+-
+-QList<CalibrateTouchDevice::MapInfoFromFile> CalibrateTouchDevice::getMapInfoListFromConfig(QString confPath)
+-{
+-    QList<CalibrateTouchDevice::MapInfoFromFile> mapRelationList;
+-    QSettings *configIniRead = new QSettings(confPath, QSettings::IniFormat);
+-
+-    int mapNum = configIniRead->value("/COUNT/num").toInt();
+-    if (mapNum < 1) {
+-        configIniRead->deleteLater();
+-        return mapRelationList;
+-    }
+-
+-    for (int i = 0; i < mapNum ;++i) {
+-        MapInfoFromFile mapRelation;
+-        QString mapName = QString("/MAP%1/%2");
+-        QString touchName = configIniRead->value(mapName.arg(i+1).arg("name")).toString();
+-        QString scrname = configIniRead->value(mapName.arg(i+1).arg("scrname")).toString();
+-        QString serial = configIniRead->value(mapName.arg(i+1).arg("serial")).toString();
+-
+-        if (NULL != touchName && NULL != scrname && NULL !=serial) {
+-            mapRelation.sTouchName = touchName;
+-            mapRelation.sMonitorName = scrname;
+-            mapRelation.sTouchSerial = serial;
+-            mapRelationList.append(mapRelation);
+-        }
+-    }
+-
+-    configIniRead->deleteLater();
+-    return mapRelationList;
+-}
+-
+-bool CalibrateTouchDevice::isTouchDevice(XIDeviceInfo dev)
+-{
+-    int i = 0;
+-    if (dev.use != XISlavePointer) {
+-        return false;
+-    }
+-
+-    if (!dev.enabled) {
+-        USD_LOG(LOG_DEBUG,"%s device is disabled.",dev.name);
+-        return false;
+-    }
+-
+-    QString devName = QString::fromUtf8(dev.name);
+-    if (devName.toUpper().contains("TOUCHPAD")) {
+-        return true;
+-    }
+-
+-    for (int j = 0; j < dev.num_classes; j++) {
+-        if (dev.classes[j]->type == XIValuatorClass) {
+-            XIValuatorClassInfo *t = (XIValuatorClassInfo*)dev.classes[j];
+-            // 如果当前的设备是绝对坐标映射 则认为该设备需要进行一次屏幕映射
+-
+-            if (t->mode == XIModeAbsolute) {
+-                USD_LOG(LOG_DEBUG,"%s type:%d mode:%d", dev.name, dev.classes[i]->type, t->mode);
+-                return true;
+-            }
+-        }
+-    }
+-    return false;
+-}
+-
+-unsigned char *CalibrateTouchDevice::getDeviceNode (XIDeviceInfo devinfo)
+-{
+-    Atom  prop;
+-    Atom act_type;
+-    int  act_format;
+-    unsigned long nitems, bytes_after;
+-    unsigned char *data;
+-
+-    prop = XInternAtom(m_pDpy, XI_PROP_DEVICE_NODE, False);
+-    if (!prop) {
+-        return NULL;
+-    }
+-
+-    if (XIGetProperty(m_pDpy, devinfo.deviceid, prop, 0, 1000, False,
+-                      AnyPropertyType, &act_type, &act_format, &nitems, &bytes_after, &data) == Success) {
+-        return data;//who use ,who free.
+-    }
+-    return NULL;
+-}
+-
+-QMap<QString, int> CalibrateTouchDevice::getAllTouchScreens()
+-{
+-    int devicesNum;
+-    XIDeviceInfo *devsInfo = nullptr;
+-    QMap<QString, int> touchScreensList;
+-
+-    devsInfo = XIQueryDevice(m_pDpy, XIAllDevices, &devicesNum);
+-
+-    for (int i = 0; i < devicesNum; i ++) {
+-        if (isTouchDevice(devsInfo[i])) {
+-            unsigned char *node = getDeviceNode(devsInfo[i]);
+-            if (node) {
+-                touchScreensList.insert(QString::fromLatin1(devsInfo[i].name), devsInfo[i].deviceid);
+-                XFree(node);
+-            }
+-        }
+-    }
+-
+-    if (devsInfo != nullptr) {
+-        XIFreeDeviceInfo(devsInfo);//TODO:test 是否需要释放。。？
+-    }
+-    return touchScreensList;
+-}
+-
+-QMap<QString, int> CalibrateTouchDevice::getAllOutput()
+-{
+-    QMap<QString, int> outputMapList;
+-    for (int koutput = 0; koutput < m_pScreenRes->noutput; koutput++) {
+-        XRROutputInfo	*rrOutputInfo = XRRGetOutputInfo (m_pDpy, m_pScreenRes, m_pScreenRes->outputs[koutput]);
+-        if (rrOutputInfo->connection != RR_Connected) {
+-            XRRFreeOutputInfo(rrOutputInfo);
+-            continue;
+-        }
+-        outputMapList.insert(QString::fromLatin1(rrOutputInfo->name), true);
+-        XRRFreeOutputInfo(rrOutputInfo);
+-    }
+-    return outputMapList;
+-}
+-
+-void CalibrateTouchDevice::calibrateTouchDeviceWithConfigFile(QString mapPath)
+-{
+-    for (int i = 0; i<m_mapRelationList.count(); ++i) {
+-        int devId = m_touchSceenMap[m_mapRelationList[i].sTouchName];
+-        int connected = m_outputMap[m_mapRelationList[i].sMonitorName];
+-        if (connected && devId) {
+-            calibrateDevice(devId, m_mapRelationList[i].sMonitorName);
+-        }
+-    }
+-}
+-
+-void CalibrateTouchDevice::calibrateTouchScreen()
+-{
+-    int devicesNum;
+-    GUdevDevice *udevDevice;
+-    GUdevClient *udevClient;
+-    XIDeviceInfo *devsInfo;
+-    int missOutput = 0;
+-    unsigned char *deviceFile;
+-    const char *udevSubsystems[] = {"input", NULL};
+-
+-    devsInfo = XIQueryDevice(m_pDpy, XIAllDevices, &devicesNum);
+-    udevClient = g_udev_client_new(udevSubsystems);
+-
+-    for (int koutput = 0; koutput < m_pScreenRes->noutput; koutput++) {
+-        XRROutputInfo *outputInfo = XRRGetOutputInfo (m_pDpy, m_pScreenRes, m_pScreenRes->outputs[koutput]);
+-        QString outputName = QString::fromLatin1(outputInfo->name);
+-
+-        if (m_outputHadMap[outputName] || outputInfo->connection != RR_Connected) {
+-            USD_LOG(LOG_DEBUG,"[%s] map:[%d] connection:%d", outputName.toLatin1().data(), m_outputHadMap[outputName], outputInfo->connection);
+-            XRRFreeOutputInfo(outputInfo);
+-            continue;
+-        }
+-        missOutput++;
+-        USD_LOG(LOG_DEBUG,"[%s] map:[%d] connection:%d", outputName.toLatin1().data(), m_outputHadMap[outputName], outputInfo->connection);
+-
+-
+-        for (int i = 0; i < devicesNum; i ++) {
+-            if (!isTouchDevice(devsInfo[i]) || m_touchSceenHadMap[devsInfo[i].deviceid] == 1) {
+-                USD_LOG(LOG_DEBUG,"skip [%s] can't find ID_INPUT_TOUCHSCREEN or ID_INPUT_TABLET m_touchSceenHadMap[devsInfo[i].deviceid] = %d or is't touchDevice", devsInfo[i].name, m_touchSceenHadMap[devsInfo[i].deviceid]);
+-                continue;
+-            }
+-
+-            deviceFile = getDeviceNode(devsInfo[i]);
+-            if (!deviceFile) {
+-                USD_LOG(LOG_DEBUG,"skip [%s] can't get device node", devsInfo[i].name);
+-                continue;
+-            }
+-
+-            udevDevice = g_udev_client_query_by_device_file(udevClient,
+-                                                             (const char *)deviceFile);
+-
+-            if (!((udevDevice && g_udev_device_has_property (udevDevice,
+-                                                              "ID_INPUT_TOUCHSCREEN")) || g_udev_device_has_property(udevDevice,"ID_INPUT_TABLET"))) {
+-//                USD_LOG(LOG_DEBUG,"skip [%s] can't find ID_INPUT_TOUCHSCREEN or ID_INPUT_TABLET", devsInfo[i].name);
+-                XFree(deviceFile);
+-                g_object_unref(udevDevice);
+-                continue;
+-            }
+-
+-           if (!g_udev_device_has_property (udevDevice,"ID_PATH")) {
+-               XFree(deviceFile);
+-               g_object_unref(udevDevice);
+-//               USD_LOG(LOG_DEBUG,"skip [%s] can't find ID_PATH", devsInfo[i].name);
+-               continue;
+-           }
+-
+-           int width = g_udev_device_get_property_as_uint64 (udevDevice,
+-                                                             "ID_INPUT_WIDTH_MM");
+-           int height = g_udev_device_get_property_as_uint64 (udevDevice,
+-                                                              "ID_INPUT_HEIGHT_MM");
+-
+-           if (!checkMatch(outputInfo->mm_width, outputInfo->mm_height, width, height)) {
+-               XFree(deviceFile);
+-               g_object_unref(udevDevice);
+-               continue;
+-           }
+-
+-           calibrateDevice(devsInfo[i].deviceid, outputName);
+-           XFree(deviceFile);
+-           g_object_unref(udevDevice);
+-           missOutput--;
+-           break;
+-        }
+-
+-        XRRFreeOutputInfo(outputInfo);
+-    }
+-
+-    if (1 == missOutput) {
+-        for (int koutput = 0; koutput < m_pScreenRes->noutput; koutput++) {
+-            XRROutputInfo *outputInfo = XRRGetOutputInfo (m_pDpy, m_pScreenRes, m_pScreenRes->outputs[koutput]);
+-            QString outputName = QString::fromLatin1(outputInfo->name);
+-
+-            if (m_outputHadMap[outputName] || outputInfo->connection != RR_Connected) {
+-                USD_LOG(LOG_DEBUG,"[%s] map:[%d] connection:%d", outputName.toLatin1().data(), m_outputHadMap[outputName], outputInfo->connection);
+-                XRRFreeOutputInfo(outputInfo);
+-                continue;
+-            }
+-
+-            for (int i = 0; i < devicesNum; i ++) {
+-                if (!isTouchDevice(devsInfo[i]) || m_touchSceenHadMap[devsInfo[i].deviceid]) {
+-                    USD_LOG(LOG_DEBUG,"skip [%s] can't find ID_INPUT_TOUCHSCREEN or ID_INPUT_TABLET m_touchSceenHadMap[devsInfo[i].deviceid] = %d or is't touchDevice", devsInfo[i].name, m_touchSceenHadMap[devsInfo[i].deviceid]);
+-                    continue;
+-                }
+-
+-                deviceFile = getDeviceNode(devsInfo[i]);
+-                if (!deviceFile) {
+-                    USD_LOG(LOG_DEBUG,"skip [%s] can't get device node", devsInfo[i].name);
+-                    continue;
+-                }
+-
+-                udevDevice = g_udev_client_query_by_device_file(udevClient,
+-                                                                 (const char *)deviceFile);
+-
+-                if (!((udevDevice && g_udev_device_has_property (udevDevice,
+-                                                                  "ID_INPUT_TOUCHSCREEN")) || g_udev_device_has_property(udevDevice,"ID_INPUT_TABLET"))) {
+-//                    USD_LOG(LOG_DEBUG,"skip [%s] can't find ID_INPUT_TOUCHSCREEN or ID_INPUT_TABLET", devsInfo[i].name);
+-                    XFree(deviceFile);
+-                    g_object_unref(udevDevice);
+-                    continue;
+-                }
+-
+-               if (!g_udev_device_has_property (udevDevice,"ID_PATH")) {
+-                   g_object_unref(udevDevice);
+-                   XFree(deviceFile);
+-//                   USD_LOG(LOG_DEBUG,"skip [%s] can't find ID_PATH", devsInfo[i].name);
+-                   continue;
+-               }
+-
+-               int width = g_udev_device_get_property_as_uint64 (udevDevice,
+-                                                                 "ID_INPUT_WIDTH_MM");
+-               int height = g_udev_device_get_property_as_uint64 (udevDevice,
+-                                                                  "ID_INPUT_HEIGHT_MM");
+-               if (width > 0 && height >0) {
+-                    calibrateDevice(devsInfo[i].deviceid, outputName);
+-               }
+-               g_object_unref(udevDevice);
+-               break;
+-            }
+-        }
+-    }
+-    g_object_unref(udevClient);
+-    XIFreeDeviceInfo(devsInfo);
+-}
+-
+-void CalibrateTouchDevice::calibrateDevice(int touchDeviceID, QString outputName, bool isRemapFromFile)
+-{
+-    m_outputHadMap.insert(outputName, 1);
+-    m_touchSceenHadMap.insert(touchDeviceID, 1);
+-
+-    QString buff = QString("xinput --map-to-output \"%1\" \"%2\"").arg(touchDeviceID).arg(outputName);
+-    USD_LOG(LOG_DEBUG,"map touch-screen [%s]\n", buff.toLatin1().data());
+-    QProcess::execute(buff);
++    TouchCalibrate* calibrate = new TouchCalibrate(configPath);
++    calibrate->calibrate();
++    calibrate->deleteLater();
++    //防止设备丢失，无法映射，目前无法接入设备注册信号，暂做3s 延时重新映射处理
++    QTimer::singleShot(3000, [=]{
++        TouchCalibrate* delayCalibrate = new TouchCalibrate(configPath);
++        delayCalibrate->calibrate();
++        delayCalibrate->deleteLater();
++        Q_EMIT calibrateFinished();
++    });
+ }
+diff --git a/plugins/save-param/calibrate-touch-device.h b/plugins/save-param/calibrate-touch-device.h
+index cf8cf20..a76297f 100644
+--- a/plugins/save-param/calibrate-touch-device.h
++++ b/plugins/save-param/calibrate-touch-device.h
+@@ -21,51 +21,11 @@
+ #ifndef CALIBRATETOUCHDEVICE_H
+ #define CALIBRATETOUCHDEVICE_H
+ 
+-
+-#include <QMap>
+ #include <QObject>
+ 
+-extern "C"{
+-#include <xorg/xserver-properties.h>
+-#include <X11/extensions/XInput2.h>
+-#include <X11/extensions/Xrandr.h>
+-#include <gudev/gudev.h>
+-#include <X11/Xatom.h>
+-}
+-
+-
+-
+ class CalibrateTouchDevice : public QObject
+ {
+     Q_OBJECT
+-    typedef struct _TouchpadMap
+-    {
+-        int     sTouchId;
+-        QString sMonitorName;   //显示器的名称
+-    }touchpadMap;
+-
+-    typedef struct _MapInfoFromFile
+-    {
+-        QString sTouchName;     //触摸屏的名称
+-        QString sTouchSerial;   //触摸屏的序列号
+-        QString sMonitorName;   //显示器的名称
+-    }MapInfoFromFile;             //配置文件中记录的映射关系信息
+-    //END 触摸屏自动映射相关
+-
+-    typedef struct
+-    {
+-        unsigned char *input_node;
+-        XIDeviceInfo dev_info;
+-        QString devName;
+-        int devId;
+-    }TsInfo;
+-
+-
+-    typedef struct
+-    {
+-        QString devName;
+-        bool isConnect;
+-    }outputInfo;
+ public:
+     CalibrateTouchDevice(QObject *parent = nullptr);
+     ~CalibrateTouchDevice();
+@@ -79,116 +39,10 @@ public:
+      * @brief calibration
+      */
+     void calibration();
+-private:
+-    /**
+-     * @brief initXparam
+-     * @return
+-     */
+-    int initXparam();
+-
+-
+-    /**
+-     * @brief getDeviceNode
+-     * @param devinfo
+-     * @return
+-     */
+-    unsigned char *getDeviceNode(XIDeviceInfo devInfo);
+-
+-    /**
+-     * @brief getTouchDevive
+-     * @param display
+-     * @return
+-     */
+-    QMap<QString, int> getAllTouchScreens();
+-
+-
+-    QMap<QString, int> getAllOutput();
+-    /**
+-     * @brief isTouchDevice
+-     * @param display
+-     * @param dev
+-     * @return
+-     */
+-    bool isTouchDevice(XIDeviceInfo dev);
+-    /**
+-     * @brief getMapInfoListFromConfig
+-     * @param confPath
+-     * @param mapInfoList
+-     * @return
+-     */
+-    QList<MapInfoFromFile> getMapInfoListFromConfig(QString confPath);
+-
+-    /**
+-     * @brief checkMatch
+-     * @param opWidth
+-     * @param opHeight
+-     * @param ipWidth
+-     * @param ipHeight
+-     * @return
+-     */
+-    bool checkMatch(double opWidth,  double opHeight,double ipWidth, double ipHeight);
+-
+-    /**
+-     * @brief calibrateTouchDeviceWithConfigFile
+-     * @param mapPath
+-     */
+-    void calibrateTouchDeviceWithConfigFile(QString mapPath);
+-
+-    /**
+-     * @brief calibrateTouchScreen
+-     */
+-    void calibrateTouchScreen();
+-
+-    /**
+-     * @brief calibrateDevice
+-     * @param input_name
+-     * @param output_name
+-     * @param isRemapFromFile
+-     *
+-     */
+-    void calibrateDevice(int touchDeviceID, QString outputName , bool isRemapFromFile = false);
+ Q_SIGNALS:
+     void calibrateFinished();
+ private:
+-
+-    int     m_screen;
+-    char   *m_pDisplayName = NULL;
+     QString m_userName;
+-    Display	*m_pDpy;
+-    Window	m_rootWindow;
+-    XRRScreenResources  *m_pScreenRes;
+-    QList<touchpadMap*>    m_touchMapList; //存储已映射的关系
+-
+-
+-    /**
+-     * @brief mapRelationList
+-     * 配置文件存储的映射关系
+-     */
+-    QList<MapInfoFromFile> m_mapRelationList;
+-
+-    /**
+-     * @brief tsDevs
+-     * 触摸屏幕信息
+-     */
+-    QMap<QString, int> m_touchSceenMap;
+-
+-    /**
+-     * @brief tsDevs
+-     * 触摸屏已映射表
+-     */
+-    QMap<int, int> m_touchSceenHadMap;
+-
+-    /**
+-    * @brief m_outputList
+-    * 显示器信息
+-    */
+-    QMap<QString, int> m_outputMap;
+-
+-    /**
+-    * @brief m_outputList
+-    * 显示器已映射表
+-    */
+-    QMap<QString, int> m_outputHadMap;
+ };
+ 
+ #endif // CALIBRATETOUCHDEVICE_H
+diff --git a/plugins/save-param/lightdm-config-helper.cpp b/plugins/save-param/lightdm-config-helper.cpp
+index 8a4695a..cb6de7e 100644
+--- a/plugins/save-param/lightdm-config-helper.cpp
++++ b/plugins/save-param/lightdm-config-helper.cpp
+@@ -84,9 +84,9 @@ double LightDmConfigHelper::getDefaultDpiScalingFactor(OutputsConfig &outputsCon
+         int width = outputsConfig.m_outputList[k]->property(OUTPUT_WIDTH).toInt();
+         int height = outputsConfig.m_outputList[k]->property(OUTPUT_HEIGHT).toInt();
+ 
+-        if (width <= 1920 || height <= 1200) {
++        if (width <= 1920 * 1.1 || height <= 1200 * 1.1) {
+             calScale = 1;
+-        } else if (width <= 2560 && height <=1500) {
++        } else if (width <= 2560*1.1 || height <=1500*1.1) {//Compatible with 16:10 resolution
+             calScale = 1.5;
+         } else {
+             calScale = 2;
+diff --git a/plugins/save-param/main.cpp b/plugins/save-param/main.cpp
+index cf8ff9e..062e8cc 100644
+--- a/plugins/save-param/main.cpp
++++ b/plugins/save-param/main.cpp
+@@ -92,7 +92,7 @@ int QAPP(int argc, char *argv[])
+ 
+ 
+     QObject::connect(&calibrateDevice, &CalibrateTouchDevice::calibrateFinished, [=](){
+-            USD_LOG(LOG_DEBUG,"get calibrateFinished signal.....");
++            SYS_LOG(LOG_DEBUG,"get calibrateFinished signal.....");
+             exit(0);
+     });
+ 
+@@ -120,6 +120,7 @@ int QAPP(int argc, char *argv[])
+         OutputsConfig m_kscreenConfigParam = saveParam.getOutputConfig();
+         configHelper.setConfigToXorg(m_kscreenConfigParam, user);
+         calibrateDevice.setUserName(user);
++        SYS_LOG(LOG_DEBUG,"goingd down");
+         calibrateDevice.calibration();
+     } else if (parser.isSet(showOption)){
+ 
+diff --git a/plugins/save-param/save-screen.cpp b/plugins/save-param/save-screen.cpp
+index 9b17f26..61c3822 100644
+--- a/plugins/save-param/save-screen.cpp
++++ b/plugins/save-param/save-screen.cpp
+@@ -484,12 +484,12 @@ void SaveScreenParam::readKscreenConfigAndSetItWithX(QString kscreenConfigName)
+ 
+     if (!QFile::exists(kscreenConfigName)) {
+         setWithoutConfig(&m_kscreenConfigParam);
+-        SYS_LOG(LOG_ERR,"can't open %s's screen config>%s set it without config.",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
++        SYS_LOG(LOG_DEBUG,"can't open %s's screen config>%s set it without config.",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
+     } else {
+-         SYS_LOG(LOG_ERR,"ready open %s's screen config>%s",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
++         SYS_LOG(LOG_DEBUG,"ready open %s's screen config>%s",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
+         if (false == readKscreenConfig(&m_kscreenConfigParam, kscreenConfigName)) {
+             setWithoutConfig(&m_kscreenConfigParam);
+-            SYS_LOG(LOG_ERR,"can't open %s's screen config>%s",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
++            SYS_LOG(LOG_DEBUG,"can't open %s's screen config>%s",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
+         } else {
+             if (m_kscreenConfigParam.m_outputList.count() == 1) {//lenovo LT1953wF 显示器
+                 width = m_kscreenConfigParam.m_outputList[0]->property("width").toInt();
+@@ -640,12 +640,12 @@ OutputsConfig SaveScreenParam::readOutputConfig()
+ 
+     if (!QFile::exists(kscreenConfigName)) {
+         setWithoutConfig(&m_kscreenConfigParam);
+-        SYS_LOG(LOG_ERR,"can't open %s's screen config>%s set it without config.",m_userName.toLatin1().data(),kscreenConfigName.toLatin1().data());
++        SYS_LOG(LOG_DEBUG,"can't open %s's screen config>%s set it without config.",m_userName.toLatin1().data(),kscreenConfigName.toLatin1().data());
+     } else {
+-        SYS_LOG(LOG_ERR,"ready open %s's screen config>%s",m_userName.toLatin1().data(),kscreenConfigName.toLatin1().data());
++        SYS_LOG(LOG_DEBUG,"ready open %s's screen config>%s",m_userName.toLatin1().data(),kscreenConfigName.toLatin1().data());
+         if (false == readKscreenConfig(&m_kscreenConfigParam, kscreenConfigName)) {
+             setWithoutConfig(&m_kscreenConfigParam);
+-            SYS_LOG(LOG_ERR,"can't open %s's screen config>%s",m_userName.toLatin1().data(),kscreenConfigName.toLatin1().data());
++            SYS_LOG(LOG_DEBUG,"can't open %s's screen config>%s",m_userName.toLatin1().data(),kscreenConfigName.toLatin1().data());
+         }
+     }
+ 
+@@ -1033,7 +1033,7 @@ QString SaveScreenParam::getKscreenConfigFullPathInLightDM()
+        XRROutputInfo	*outputInfo = XRRGetOutputInfo (m_pDpy, m_pScreenRes, m_pScreenRes->outputs[tempInt]);
+        if (nitems == 0) {
+            if (RR_Connected == outputInfo->connection) {
+-               SYS_LOG(LOG_DEBUG,"%s %d edid is empty",outputInfo->name,outputInfo->connection);
++               USD_LOG(LOG_DEBUG,"%s %d edid is empty",outputInfo->name,outputInfo->connection);
+                QString checksum = QString::fromLatin1(outputInfo->name);
+                if (outputsHashList.contains(checksum)) {
+                    m_isSameHash = true;
+@@ -1046,7 +1046,7 @@ QString SaveScreenParam::getKscreenConfigFullPathInLightDM()
+            }
+            continue;
+        }
+-       XRRFreeOutputInfo(outputInfo);
++
+ 
+        hash.addData(reinterpret_cast<const char *>(prop), nitems);
+        QString checksum = QString::fromLatin1(hash.result().toHex());
+@@ -1055,8 +1055,9 @@ QString SaveScreenParam::getKscreenConfigFullPathInLightDM()
+        }
+        outputsHashList.append(checksum);
+        dic.hash = checksum;
+-       dic.name = QString::fromLatin1(outputInfo->name);
++       dic.name = QString::fromLocal8Bit(outputInfo->name);
+        m_outputHashDic.append(dic);
++       XRRFreeOutputInfo(outputInfo);
+     }
+ 
+     if (outputsHashList.count() == 0) {
+diff --git a/plugins/xinput/input-monitor.cpp b/plugins/xinput/input-monitor.cpp
+new file mode 100644
+index 0000000..984d87f
+--- /dev/null
++++ b/plugins/xinput/input-monitor.cpp
+@@ -0,0 +1,125 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2022 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ * Authors: sundagao <sundagao@kylinos.cn>
++ */
++#include "input-monitor.h"
++#include <QTimer>
++
++extern "C" {
++#include <X11/Xlib.h>
++#include <X11/extensions/XInput2.h>
++#include "clib-syslog.h"
++}
++
++int eventSift(XIHierarchyEvent *event, int flag)
++{
++    int id = 0;
++    for (int i = 0; i < event->num_info; ++i) {
++        if (event->info[i].flags & flag) {
++            id = event->info[i].deviceid;
++        }
++    }
++    return id;
++}
++
++InputMonitor::InputMonitor(QObject *parent)
++{
++
++}
++
++void InputMonitor::hierarchyChangedEvent(void *data)
++{
++    XIHierarchyEvent* event = static_cast<XIHierarchyEvent *>(data);
++    if (event->flags & XISlaveAdded) {
++        Q_EMIT deviceAdd(eventSift(event,XISlaveAdded));
++
++    } else if (event->flags & XISlaveRemoved) {
++        Q_EMIT deviceRemove(eventSift(event,XISlaveRemoved));
++
++    } else if (event->flags & XIDeviceEnabled) {
++
++    } else if (event->flags & XIDeviceDisabled) {
++
++    } else if (event->flags & XISlaveAttached) {
++
++    } else if (event->flags & XISlaveDetached) {
++
++    } else if (event->flags & XIMasterAdded) {
++
++    } else if (event->flags & XIMasterRemoved) {
++
++    }
++}
++
++void InputMonitor::listeningStart()
++{
++    Display *display = XOpenDisplay(NULL);
++    if (!display) {
++        USD_LOG(LOG_WARNING,"listeningStart is faild , because open display error");
++        return;
++    }
++    int xi_opcode ,event ,error;
++    if (!XQueryExtension(display, "XInputExtension" , &xi_opcode , &event, &error)) {
++        USD_LOG(LOG_WARNING,"X Input extension not available");
++        return;
++    }
++    XIEventMask m;
++    m.deviceid = XIAllDevices;
++    m.mask_len = XIMaskLen(XI_LASTEVENT);
++    m.mask = (unsigned char*)calloc(m.mask_len, sizeof(char));
++    XISetMask(m.mask, XI_HierarchyChanged);
++    Window win = DefaultRootWindow(display);
++    XISelectEvents(display, win, &m, 1);
++    XSync(display, False);
++    free(m.mask);
++    while (true) {
++        if (m_stop) {
++            USD_LOG(LOG_DEBUG,"input montior has stoped .");
++            break;
++        }
++        XEvent ev;
++        XGenericEventCookie *cookie = (XGenericEventCookie*)&ev.xcookie;
++        XNextEvent(display, (XEvent*)&ev);
++        if (XGetEventData(display, cookie) &&
++            cookie->type == GenericEvent &&
++            cookie->extension == xi_opcode) {
++            switch (cookie->evtype)
++            {
++                case XI_HierarchyChanged:
++                    hierarchyChangedEvent(cookie->data);
++                    break;
++                default:
++                    break;
++            }
++        }
++        XFreeEventData(display, cookie);
++    }
++    XDestroyWindow(display, win);
++}
++
++void InputMonitor::startMonitor()
++{
++    QTimer::singleShot(0, this, &InputMonitor::listeningStart);
++}
++
++void InputMonitor::stopMontior()
++{
++    m_stop = true;
++}
++
+diff --git a/plugins/xinput/input-monitor.h b/plugins/xinput/input-monitor.h
+new file mode 100644
+index 0000000..c69991a
+--- /dev/null
++++ b/plugins/xinput/input-monitor.h
+@@ -0,0 +1,51 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2022 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ *
++ * Authors: sundagao <sundagao@kylinos.cn>
++ */
++#ifndef INPUTMONITOR_H
++#define INPUTMONITOR_H
++
++#include <QObject>
++#include<QX11Info>
++
++class InputMonitor : public QObject
++{
++    Q_OBJECT
++public:
++    void stopMontior();
++public:
++    explicit InputMonitor(QObject *parent = nullptr);
++private:
++    void hierarchyChangedEvent(void *data);
++public Q_SLOTS:
++    void startMonitor();
++
++private Q_SLOTS:
++    void listeningStart();
++Q_SIGNALS:
++
++    void deviceAdd(int id);
++
++    void deviceRemove(int id);
++private:
++    bool m_stop = false;
++
++};
++
++#endif // INPUTMONITOR_H
+diff --git a/plugins/xinput/monitorinputtask.cpp b/plugins/xinput/monitorinputtask.cpp
+deleted file mode 100644
+index 0e8f5ed..0000000
+--- a/plugins/xinput/monitorinputtask.cpp
++++ /dev/null
+@@ -1,180 +0,0 @@
+-/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
+- * -*- coding: utf-8 -*-
+- *
+- * Copyright (C) 2020 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#include "monitorinputtask.h"
+-#include "xinputmanager.h"
+-
+-MonitorInputTask* MonitorInputTask::instance(QObject *parent)
+-{
+-    static MonitorInputTask *_instance = nullptr;
+-    QMutex mutex;
+-    mutex.lock();
+-    if(!_instance)
+-            _instance = new MonitorInputTask(parent);
+-    mutex.unlock();
+-    return _instance;
+-}
+-
+-MonitorInputTask::MonitorInputTask(QObject *parent):
+-    QObject(parent),
+-    m_running(false)
+-{
+-    initConnect();
+-}
+-
+-void MonitorInputTask::initConnect()
+-{
+-
+-}
+-
+-void MonitorInputTask::StartManager()
+-{
+-    USD_LOG(LOG_DEBUG,"info: [MonitorInputTask][StartManager]: thread id =%d",QThread::currentThreadId());
+-    QTimer::singleShot(0, this, &MonitorInputTask::ListeningToInputEvent);
+-}
+-
+-int MonitorInputTask::EventSift(XIHierarchyEvent *event, int flag)
+-{
+-    int device_id = -1;
+-    int cnt = event->num_info;
+-    XIHierarchyInfo *event_list = event->info;
+-    for(int i = 0;i < cnt;i++)
+-    {
+-        if(event_list[i].flags & flag)
+-        {
+-            device_id = event_list[i].deviceid;
+-        }
+-    }
+-    return device_id;
+-}
+-
+-
+-
+-void MonitorInputTask::ListeningToInputEvent()
+-{
+-    USD_LOG(LOG_DEBUG,"Start ListeningToInputEvent!");
+-    Display *display = NULL;
+-    // open display
+-
+-//    PEEK_XOpenDisplay(display);
+-    display = XOpenDisplay(NULL);
+-
+-
+-   // display = XOpenDisplay(NULL);
+-//    openDisplayOK = true;
+-    //QX11Info::display();
+-
+-    USD_LOG(LOG_DEBUG, "choke check pass......");
+-
+-    if (display == NULL)
+-    {
+-        USD_LOG(LOG_ERR,"OpenDisplay fail....");
+-        return;
+-    }
+-
+-    XIEventMask mask[2];
+-    XIEventMask *m;
+-    Window win;
+-     USD_LOG(LOG_DEBUG, "choke check pass......");
+-    win = DefaultRootWindow(display);
+-     USD_LOG(LOG_DEBUG, "choke check pass......");
+-    m = &mask[0];
+-    m->deviceid = XIAllDevices;
+-    m->mask_len = XIMaskLen(XI_LASTEVENT);
+-    m->mask = (unsigned char*)calloc(m->mask_len, sizeof(char));
+-    XISetMask(m->mask, XI_HierarchyChanged);
+-     USD_LOG(LOG_DEBUG, "choke check pass......");
+-    m = &mask[1];
+-    m->deviceid = XIAllMasterDevices;
+-    m->mask_len = XIMaskLen(XI_LASTEVENT);
+-    m->mask = (unsigned char*)calloc(m->mask_len, sizeof(char));
+-
+-    XISelectEvents(display, win, &mask[0], 2);
+-    XSync(display, False);
+-    USD_LOG(LOG_DEBUG, "choke check pass......");
+-    free(mask[0].mask);
+-    free(mask[1].mask);
+-
+-    while(true)
+-    {
+-        XEvent ev;
+-        XGenericEventCookie *cookie = (XGenericEventCookie*)&ev.xcookie;
+-        USD_LOG(LOG_DEBUG, "choke chdeck pass......cookie->evtype:%d",cookie->evtype);
+-
+-//        if (cookie->type != GenericEvent){
+-//            USD_LOG(LOG_DEBUG, "choke chdeck pass......type error:%d is't GenericEvent(%d)",cookie->evtype,GenericEvent);
+-//            continue;
+-//        }
+-
+-        XNextEvent(display, (XEvent*)&ev);//该方法会引起glib崩溃一次.下次出现记录具体的事件类型，该方法是阻塞处理。。。。
+-        USD_LOG(LOG_DEBUG, "choke check pass......event:%d",ev.type);
+-        // 判断当前事件监听是否还要继续
+-        // 保证效率 m_running[*bool] 的访问不需要加锁
+-        if(!m_running){
+-            USD_LOG(LOG_DEBUG, "choke check pass......break");
+-            break;
+-        }
+-        USD_LOG(LOG_DEBUG, "choke check pass......");
+-        if (XGetEventData(display, cookie) &&
+-            cookie->type == GenericEvent)
+-        {
+-             USD_LOG(LOG_DEBUG, "choke check pass......");
+-            if(XI_HierarchyChanged == cookie->evtype)
+-            {
+-                XIHierarchyEvent *hev = (XIHierarchyEvent*)cookie->data;
+-                if(hev->flags & XIMasterRemoved)
+-                {
+-                    Q_EMIT masterRemoved(EventSift(hev, XIMasterRemoved));
+-                }
+-                else if(hev->flags & XISlaveAdded)
+-                {
+-                    Q_EMIT slaveAdded(EventSift(hev, XISlaveAdded));
+-                }
+-                else if(hev->flags & XISlaveRemoved)
+-                {
+-                    Q_EMIT slaveRemoved(EventSift(hev, XISlaveRemoved));
+-                }
+-                else if(hev->flags & XISlaveAttached)
+-                {
+-                    Q_EMIT slaveAttached(EventSift(hev, XISlaveAttached));
+-                }
+-                else if(hev->flags & XISlaveDetached)
+-                {
+-                    Q_EMIT slaveDetached(EventSift(hev, XISlaveDetached));
+-                }
+-                else if(hev->flags & XIDeviceEnabled)
+-                {
+-                    Q_EMIT deviceEnable(EventSift(hev, XIDeviceEnabled));
+-                }
+-                else if(hev->flags & XIDeviceDisabled)
+-                {
+-                    Q_EMIT deviceDisable(EventSift(hev, XIDeviceDisabled));
+-                }
+-                else if(hev->flags & XIMasterAdded)
+-                {
+-                    Q_EMIT masterAdded(EventSift(hev, XIMasterAdded));
+-                }
+-            }
+-        }
+-        USD_LOG(LOG_DEBUG, "choke check pass......");
+-        XFreeEventData(display, cookie);
+-    }
+-
+-    XDestroyWindow(display, win);
+-}
+diff --git a/plugins/xinput/monitorinputtask.h b/plugins/xinput/monitorinputtask.h
+deleted file mode 100644
+index 4f72b35..0000000
+--- a/plugins/xinput/monitorinputtask.h
++++ /dev/null
+@@ -1,115 +0,0 @@
+-/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
+- * -*- coding: utf-8 -*-
+- *
+- * Copyright (C) 2020 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef MONITORINPUTTASK_H
+-#define MONITORINPUTTASK_H
+-
+-#include <QObject>
+-#include <QThread>
+-#include <QMutex>
+-#include <QTimer>
+-#include <QDBusConnection>
+-#include <QtConcurrent/QtConcurrent>
+-#include <QDebug>
+-
+-#include <X11/Xlib.h>
+-#include <X11/extensions/XInput2.h>
+-#include <X11/extensions/XInput.h>
+-#include <X11/Xutil.h>
+-#include <X11/Xatom.h>
+-#include<QX11Info>
+-
+-extern "C"{
+-    #include <unistd.h>
+-    #include "clib-syslog.h"
+-//    #include "KylinDefine.h"
+-}
+-
+-class MonitorInputTask : public QObject
+-{
+-    Q_OBJECT
+-public:
+-    bool m_running;
+-
+-public:
+-    static MonitorInputTask* instance(QObject *parent = nullptr);
+-
+-public Q_SLOTS:
+-    void StartManager();
+-
+-Q_SIGNALS:
+-    /*!
+-     * \brief slaveAdded 从设备添加
+-     * \param device_id
+-     */
+-    void slaveAdded(int device_id);
+-    /*!
+-     * \brief slaveRemoved 从设备移除
+-     * \param device_id
+-     */
+-    void slaveRemoved(int device_id);
+-    /*!
+-     * \brief masterAdded 主分支添加
+-     * \param device_id
+-     */
+-    void masterAdded(int device_id);
+-    /*!
+-     * \brief masterRemoved 主分支移除
+-     * \param device_id
+-     */
+-    void masterRemoved(int device_id);
+-    /*!
+-     * \brief deviceEnable 设备启用
+-     * \param device_id
+-     */
+-    void deviceEnable(int device_id);
+-    /*!
+-     * \brief deviceDisable 设备禁用
+-     * \param device_id
+-     */
+-    void deviceDisable(int device_id);
+-    /*!
+-     * \brief slaveAttached 从设备附加
+-     * \param device_id
+-     */
+-    void slaveAttached(int device_id);
+-    /*!
+-     * \brief slaveDetached 从设备分离
+-     * \param device_id
+-     */
+-    void slaveDetached(int device_id);
+-
+-private:
+-    MonitorInputTask(QObject *parent = nullptr);
+-    void initConnect();
+-    /*!
+-     * \brief ListeningToInputEvent 监听所有输入设备的事件
+-     */
+-    void ListeningToInputEvent();
+-    /*!
+-     * \brief EventSift 筛选出发生事件的设备ID
+-     * \param event 所有设备的事件信息
+-     * \param flag 当前发生的事件
+-     * \return 查找失败  return -1;   查找成功 return device_id;
+-     */
+-    int EventSift(XIHierarchyEvent *event, int flag);
+-
+-};
+-
+-#endif // MONITORINPUTTASK_H
+diff --git a/plugins/xinput/xinput.pro b/plugins/xinput/xinput.pro
+index d076383..4ba57a3 100644
+--- a/plugins/xinput/xinput.pro
++++ b/plugins/xinput/xinput.pro
+@@ -21,12 +21,12 @@ INCLUDEPATH += \
+         -I ukui-settings-daemon/
+ 
+ SOURCES += \
+-        monitorinputtask.cpp \
++        input-monitor.cpp \
+         xinputmanager.cpp \
+         xinputplugin.cpp
+ 
+ HEADERS += \
+-        monitorinputtask.h \
++        input-monitor.h \
+         xinputmanager.h \
+         xinputplugin.h
+ 
+diff --git a/plugins/xinput/xinputmanager.cpp b/plugins/xinput/xinputmanager.cpp
+index b98e17c..9005b25 100644
+--- a/plugins/xinput/xinputmanager.cpp
++++ b/plugins/xinput/xinputmanager.cpp
+@@ -18,248 +18,82 @@
+  */
+ 
+ #include "xinputmanager.h"
+-
+-#include <QProcess>
+-#include <QQueue>
+-#include <QGSettings/QGSettings>
+ #include <QDBusInterface>
+-#include <QDBusPendingCall>
+ 
++extern "C" {
++#include <X11/Xlib.h>
++#include <X11/extensions/XInput.h>
++#include "clib-syslog.h"
++}
+ 
+-#define UKUI_CONTROL_CENTER_PEN_SCHEMA    "org.ukui.control-center.pen"
+-#define RIGHT_CLICK_KEY                   "right-click"
++Atom properyToAtom(const char* property)
++{
++    return XInternAtom(QX11Info::display(), property, False);
++}
+ 
+ XinputManager::XinputManager(QObject *parent):
+     QObject(parent)
+ {
+     init();
++
+ }
+ 
+ void XinputManager::init()
+ {
+-    // init device monitor
+-    m_pMonitorInputTask = MonitorInputTask::instance();
+-    connect(this, &XinputManager::sigStartThread, m_pMonitorInputTask, &MonitorInputTask::StartManager);
+-    connect(m_pMonitorInputTask, &MonitorInputTask::slaveAdded, this, &XinputManager::onSlaveAdded);
+-    connect(m_pMonitorInputTask, &MonitorInputTask::slaveAdded, this, &XinputManager::updateButtonMap);
+-
+-    m_pManagerThread = new QThread(this);
+-    m_pMonitorInputTask->moveToThread(m_pManagerThread);
+-
+-    // init pen settings
+-    if ( false == initSettings()) {
+-        return ;
+-    }
+-
+-    // init settings monitor
+-    connect(m_penSettings, SIGNAL(changed(QString)), this, SLOT(updateSettings(QString)));
++    m_monitorThread = new QThread(this);
++    m_inputMonitor = new InputMonitor();
++    m_inputMonitor->moveToThread(m_monitorThread);
++    connect(m_monitorThread, &QThread::started, m_inputMonitor, &InputMonitor::startMonitor);
++    connect(m_monitorThread, &QThread::finished, m_inputMonitor, &InputMonitor::deleteLater);
++
++    connect(m_inputMonitor, &InputMonitor::deviceAdd, this, &XinputManager::deviceAdd);
++    connect(m_inputMonitor, &InputMonitor::deviceRemove, this, &XinputManager::deviceRemove);
+ }
+ 
+ XinputManager::~XinputManager()
+ {
+-    if (m_penSettings)
+-        delete m_penSettings;
++    stop();
+ }
+ 
+ void XinputManager::start()
+ {
+-    USD_LOG(LOG_DEBUG,"info: [XinputManager][StartManager]: thread id =%d",QThread::currentThreadId());
+-    m_runningMutex.lock();
+-    m_pMonitorInputTask->m_running = true;
+-    m_runningMutex.unlock();
+-
+-    m_pManagerThread->start();
+-    Q_EMIT sigStartThread();
++    m_monitorThread->start();
+ }
+ 
+ void XinputManager::stop()
+ {
+-    if(m_pManagerThread->isRunning())
+-    {
+-        m_runningMutex.lock();
+-        m_pMonitorInputTask->m_running = false;
+-        m_runningMutex.unlock();
+-
+-        m_pManagerThread->quit();
++    if (m_monitorThread->isRunning()) {
++        m_monitorThread->quit();
+     }
+ }
+ 
+-void XinputManager::SetPenRotation(int device_id)
++void XinputManager::deviceAdd(int id)
+ {
+-//    Q_UNUSED(device_id);
+-    // 得到触控笔的ID
+-    QQueue<int> penDeviceQue;
+-    int  ndevices = 0;
+-    Display *dpy = XOpenDisplay(NULL);
+-    XIDeviceInfo *info = XIQueryDevice(dpy, XIAllDevices, &ndevices);
+-
+-    for (int i = 0; i < ndevices; i++) {
+-        XIDeviceInfo* dev = &info[i];
+-        if(!dev->enabled) continue;
+-        if(device_id != dev->deviceid) {
+-            continue;
+-        }
+-        if(dev->use != XISlavePointer) continue;
+-        for (int j = 0; j < dev->num_classes; j++) {
+-            if (dev->classes[j]->type == XITouchClass) {
+-                // 如果当前的设备是绝对坐标映射 则认为该设备需要进行一次屏幕映射
+-                QDBusInterface *xrandDbus = new QDBusInterface(DBUS_XRANDR_NAME,DBUS_XRANDR_PATH,DBUS_XRANDR_INTERFACE,QDBusConnection::sessionBus(),this);
+-                if (xrandDbus->isValid()) {
+-                     //USD_LOG(LOG_DEBUG, "..");
+-                      xrandDbus->asyncCall("setScreenMap");
+-                }
+-            }
+-        }
+-    }
+-
+-    for (int i = 0; i < ndevices; i++) {
+-        XIDeviceInfo* dev = &info[i];
+-        // 判断当前设备是不是触控笔
+-        if(dev->use != XISlavePointer) continue;
+-        if(!dev->enabled) continue;
+-        for (int j = 0; j < dev->num_classes; j++) {
+-            if (dev->classes[j]->type == XIValuatorClass) {
+-                XIValuatorClassInfo *t = (XIValuatorClassInfo*)dev->classes[j];
+-                // 如果当前的设备是绝对坐标映射 则认为该设备需要进行一次屏幕映射
+-                if (t->mode == XIModeAbsolute) {
+-                    penDeviceQue.enqueue(dev->deviceid);
+-                    break;
++    int ndevices;
++    XDeviceInfo* deviceList = XListInputDevices(QX11Info::display(),&ndevices);
++    for (int i = 0 ; i < ndevices ; ++i) {
++        if (id == deviceList[i].id) {
++            if (deviceList[i].type == properyToAtom(XI_TOUCHSCREEN) ||
++                deviceList[i].type == properyToAtom(XI_TABLET)) {
++                USD_LOG(LOG_DEBUG, "new touchscreen/tablet name is %s, id is %d ", deviceList[i].name, deviceList[i].id);
++                //绝对坐标映射设备进行映射
++                QDBusInterface *interface = new QDBusInterface("org.ukui.SettingsDaemon",
++                                                               "/org/ukui/SettingsDaemon/xrandr",
++                                                               "org.ukui.SettingsDaemon.xrandr",
++                                                               QDBusConnection::sessionBus());
++                if (interface && interface->isValid()) {
++                    interface->call("setScreenMap");
++                    interface->deleteLater();
+                 }
+             }
+         }
+     }
+-    if(!penDeviceQue.size()) {
+-//        qDebug() << "info: [XrandrManager][SetPenRotation]: Do not neet to pen device map-to-output outDevice!";
+-        //return;
+-        goto FREE_DPY;
+-    }
+-    // 设置map-to-output
+-    while(penDeviceQue.size()) {
+-        int pen_device_id = penDeviceQue.dequeue();
+-        QString name = "eDP-1"; //针对该项目而言，笔记本内显固定为 eDP-1
+-        QString cmd = QString("xinput map-to-output %1 %2").arg(pen_device_id).arg(name);
+-        QProcess::execute(cmd);
+-    }
+-FREE_DPY:
+-    XIFreeDeviceInfo(info);
+-    XCloseDisplay(dpy);
++    XFreeDeviceList(deviceList);
+ }
+ 
+-void XinputManager::onSlaveAdded(int device_id)
+-{
+-//    qDebug() << "info: [XinputManager][onSlaveAdded]: Slave Device(id =" << device_id << ") Added!";
+-    SetPenRotation(device_id);//新设备不是触控笔就不要处理了！
+-}
+-
+-
+-bool XinputManager::initSettings()
++void XinputManager::deviceRemove(int id)
+ {
+-    if (!QGSettings::isSchemaInstalled(UKUI_CONTROL_CENTER_PEN_SCHEMA)) {
+-        USD_LOG(LOG_DEBUG,"Can not find schema org.ukui.control-center.pen!");
+-        return false;
+-    }
+-
+-    m_penSettings = new QGSettings(UKUI_CONTROL_CENTER_PEN_SCHEMA);
+-
+-    updateButtonMap();
+-
+-    return true;
++    // device remove
+ }
+ 
+-void XinputManager::updateSettings(QString key)
+-{
+-    if (key == RIGHT_CLICK_KEY) {
+-        updateButtonMap();
+-    }
+-}
+ 
+-void XinputManager::updateButtonMap()
+-{
+-    return;
+-    QQueue<int> deviceQue = GetPenDevice();
+-
+-    if (!deviceQue.size()) {
+-        return;
+-    }
+-
+-    QString command;
+-
+-    //! \brief The button-map default value is 1234567,
+-    //! and the modified mapping is 1334567
+-    //! The numbers in this refer to button 2 being mapped to button 3
+-    while (deviceQue.size()) {
+-        if (m_penSettings->get(RIGHT_CLICK_KEY).value<bool>()) {
+-            command = QString("xinput set-button-map %1 1 3 3").arg(deviceQue.dequeue());
+-        }
+-        else {
+-            command = QString("xinput set-button-map %1 1 2 3").arg(deviceQue.dequeue());
+-        }
+-        QProcess::execute(command);
+-    }
+-}
+-
+-QQueue<int> XinputManager::GetPenDevice()
+-{
+-    QQueue<int>   penDeviceQue;
+-    int           ndevices = 0;
+-    Display*      dpy = XOpenDisplay(NULL);
+-    XIDeviceInfo* info = XIQueryDevice(dpy, XIAllDevices, &ndevices);
+-
+-    for (int i = 0; i < ndevices; i++) {
+-        XIDeviceInfo* dev = &info[i];
+-
+-        if(dev->use != XISlavePointer)
+-            continue;
+-
+-        if(!dev->enabled)
+-            continue;
+-
+-        XDevice* device = XOpenDevice(dpy, dev->deviceid);
+-
+-        /*!
+-         * \note Currently only pen devices have this property,
+-         * but it is not certain that this property must be pen-only
+-        */
+-        if (deviceHasProperty(device, "libinput Tablet Tool Pressurecurve")) {
+-            penDeviceQue.enqueue(dev->deviceid);
+-        }
+-
+-        XCloseDevice(dpy, device);
+-    }
+-
+-    XIFreeDeviceInfo(info);
+-    XCloseDisplay(dpy);
+-
+-    return penDeviceQue;
+-}
+-
+-bool XinputManager::deviceHasProperty(XDevice    *device,
+-                                      const char *property_name)
+-{
+-    Display*       dpy = XOpenDisplay(NULL);
+-    Atom           realtype, prop;
+-    int            realformat;
+-    unsigned long  nitems, bytes_after;
+-    unsigned char* data;
+-
+-    prop = XInternAtom (dpy, property_name, True);
+-    if (!prop) {
+-        XCloseDisplay(dpy);
+-        return false;
+-    }
+-
+-    try {
+-        if ((XGetDeviceProperty(dpy, device, prop, 0, 1, False,
+-                                XA_INTEGER, &realtype, &realformat, &nitems,
+-                                &bytes_after, &data) == Success) && (realtype != None)) {
+-            XFree (data);
+-            XCloseDisplay(dpy);
+-            return true;
+-        }
+-    } catch (int x) {
+-
+-    }
+-
+-    XCloseDisplay(dpy);
+-    return false;
+-}
+diff --git a/plugins/xinput/xinputmanager.h b/plugins/xinput/xinputmanager.h
+index d63c907..2a86f67 100644
+--- a/plugins/xinput/xinputmanager.h
++++ b/plugins/xinput/xinputmanager.h
+@@ -22,8 +22,7 @@
+ 
+ #include <QObject>
+ #include <QThread>
+-
+-#include "monitorinputtask.h"
++#include "input-monitor.h"
+ 
+ extern "C"{
+     #include "clib-syslog.h"
+@@ -40,34 +39,14 @@ public:
+     void start();
+     void stop();
+ 
+-Q_SIGNALS:
+-    void sigStartThread();
+-
++private Q_SLOTS:
++    void deviceAdd(int id);
++    void deviceRemove(int id);
+ private:
+     void init();
+-    bool deviceHasProperty(XDevice    *device,
+-                           const char *property_name);
+-private:
+-    QThread *m_pManagerThread;
+-    QMutex m_runningMutex;
+-    MonitorInputTask *m_pMonitorInputTask;
+-    QGSettings* m_penSettings = nullptr;
+-
+-private Q_SLOTS:
+-    void onSlaveAdded(int device_id);
+-    void updateSettings(QString key);
+-
+-    /*!
+-     * \brief update tablet tool button map
+-     * It will refresh when the gsetting updates
+-     * or receives an increased signal from the device
+-    */
+-    void updateButtonMap();
+-
+ private:
+-    void SetPenRotation(int device_id);
+-    QQueue<int> GetPenDevice();
+-    bool initSettings();
++    QThread *m_monitorThread = nullptr;
++    InputMonitor* m_inputMonitor = nullptr;
+ };
+ 
+ #endif // XINPUTMANAGER_H
+diff --git a/plugins/xinput/xinputplugin.cpp b/plugins/xinput/xinputplugin.cpp
+index 3674281..ed99358 100644
+--- a/plugins/xinput/xinputplugin.cpp
++++ b/plugins/xinput/xinputplugin.cpp
+@@ -18,21 +18,15 @@
+  */
+ 
+ #include "xinputplugin.h"
+-
+-#include <QMutex>
+ #include <syslog.h>
+ 
+ //XinputPlugin* XinputPlugin::_instance = nullptr;
+ 
+-//XinputPlugin* XinputPlugin::instance()
+-//{
+-//    QMutex mutex;
+-//    mutex.lock();
+-//    if(nullptr == _instance)
+-//        _instance = new XinputPlugin;
+-//    mutex.unlock();
+-//    return _instance;
+-//}
++XinputPlugin* XinputPlugin::instance()
++{
++    static XinputPlugin instance;
++    return &instance;
++}
+ 
+ XinputPlugin::XinputPlugin()
+ {
+diff --git a/plugins/xrandr/udev-input.cpp b/plugins/xrandr/udev-input.cpp
+deleted file mode 100644
+index 361a339..0000000
+--- a/plugins/xrandr/udev-input.cpp
++++ /dev/null
+@@ -1,115 +0,0 @@
+-#include "udev-input.h"
+-
+-#include <QString>
+-
+-char* udevInput::subDev[] = {"usb_interface"};
+-
+-udevInput::udevInput(QObject *parent){
+-
+-}
+-
+-
+-void udevInput::print_device(struct udev_device *device, const char *source, int env)
+-{
+-    struct timeval tv;
+-    struct timezone tz;
+-    gettimeofday(&tv, &tz);
+-
+-    printf("%-6s[%llu.%06u] %-8s (type)%s (tags)%s\n \t%s (%s)\n",
+-	       source,
+-	       (unsigned long long) tv.tv_sec, (unsigned int) tv.tv_usec,
+-	       udev_device_get_action(device),
+-               udev_device_get_devtype(device),
+-               udev_device_get_property_value(device,"TAGS"),
+-	       udev_device_get_devpath(device),
+-	       udev_device_get_subsystem(device));
+-
+-    if (env) {
+-        struct udev_list_entry *list_entry;
+-        udev_list_entry_foreach(list_entry, udev_device_get_properties_list_entry(device))
+-                printf("%s=%s\n",
+-                       udev_list_entry_get_name(list_entry),
+-                       udev_list_entry_get_value(list_entry));
+-        printf("\n");
+-    }
+-}
+-
+-
+-int udevInput::udevadm_monitor(struct udev *udev)
+-{
+-    int env = 0;
+-	int print_kernel = 1;
+-	struct udev_monitor *kernel_monitor = NULL;
+-	fd_set readfds;
+-	int rc = 0;
+- 
+-	printf("monitor will print the received events.\n");
+-	
+-	if (print_kernel) {
+-		kernel_monitor = udev_monitor_new_from_netlink(udev, "udev"); //这里的udev源码中没有"udev"这个参数，不加进去返回值就为NULL，所以要加这个
+-		if (kernel_monitor == NULL) {
+-			rc = 3;
+-			printf("udev_monitor_new_from_netlink() error\n");
+-			goto out;
+-		}
+- 
+-		if (udev_monitor_enable_receiving(kernel_monitor) < 0) {
+-			rc = 4;
+-			goto out;
+-		}
+-	}
+-	
+-	printf("\n");
+-	while (1) {
+-		int fdcount;
+-		FD_ZERO(&readfds);
+- 
+-		if (kernel_monitor != NULL)
+-			FD_SET(udev_monitor_get_fd(kernel_monitor), &readfds);
+- 
+-		fdcount = select(udev_monitor_get_fd(kernel_monitor)+1, &readfds, NULL, NULL, NULL);
+-		if (fdcount < 0) {
+-			if (errno != EINTR)
+-				fprintf(stderr, "error receiving uevent message: %m\n");
+-			continue;
+-		}
+- 
+-		if ((kernel_monitor != NULL) && FD_ISSET(udev_monitor_get_fd(kernel_monitor), &readfds)) {
+-			struct udev_device *device;
+-			device = udev_monitor_receive_device(kernel_monitor);
+-			if (device == NULL)
+-				continue;
+-			//print_device(device, "UEVENT", env);
+-            
+-            // char *type = udev_device_get_devtype(device);
+-            if( udev_device_get_devtype(device) && (strcmp(udev_device_get_devtype(device),subDev[usb_interface])== 0)) {
+-                printf(" ----- [%s]\n ",subDev[usb_interface]);
+-                if(strcmp(udev_device_get_action(device),"bind") == 0) {
+-                    printf(" emit signal\n ");
+-                    Q_EMIT plugEvent(true);
+-                }
+-            }
+-
+-			udev_device_unref(device);
+-		}
+- 
+-	}
+- 
+-out:
+-	udev_monitor_unref(kernel_monitor);
+-	return rc;
+-}
+-
+-void udevInput::run()
+-{
+-    struct udev *udev;
+-
+-    udev = udev_new();
+-    if (!udev) {
+-        udev_unref(udev);
+-    }
+-
+-    udevadm_monitor(udev);
+-
+-    udev_unref(udev);
+-}
+diff --git a/plugins/xrandr/udev-input.h b/plugins/xrandr/udev-input.h
+deleted file mode 100644
+index b2e3028..0000000
+--- a/plugins/xrandr/udev-input.h
++++ /dev/null
+@@ -1,48 +0,0 @@
+-#ifndef UDEV_INPPUT_H
+-#define UDEV_INPPUT_H
+-
+-#include<QThread>
+-#include<QDebug>
+-extern "C" {
+-#include <unistd.h>
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <errno.h>
+-#include <signal.h>
+-#include <sys/time.h>
+-#include <sys/socket.h>
+-#include <sys/un.h>
+-#include <sys/select.h>
+-#include <linux/types.h>
+-#include <linux/netlink.h>
+-#include <libudev.h>
+-}
+-
+-enum deviceType {
+-    usb_interface,
+-    sound,
+-    usb
+-};
+-
+-class udevInput : public QThread
+-{
+-    Q_OBJECT
+-public:
+-    udevInput(QObject* parent = nullptr);
+-    void print_device(struct udev_device *device, const char *source, int env);
+-    int udevadm_monitor(struct udev *udev);
+-    //    void  sig_handler(int signum);
+-    static char *subDev[sizeof(deviceType)*3];
+-
+-Q_SIGNALS:
+-    void plugEvent(bool);
+-
+-    //public Q_SLOTS:
+-    //    void myThreadSlot(const int);
+-protected:
+-    void run() override;
+-};
+-
+-
+-
+-#endif
+\ No newline at end of file
+diff --git a/plugins/xrandr/xrandr-adaptor.h b/plugins/xrandr/xrandr-adaptor.h
+index 2cc8c83..fad2f70 100644
+--- a/plugins/xrandr/xrandr-adaptor.h
++++ b/plugins/xrandr/xrandr-adaptor.h
+@@ -38,6 +38,16 @@ class XrandrAdaptor: public QDBusAbstractAdaptor
+                                        "    <signal name=\"screenModeChanged\">\n"
+                                        "      <arg direction=\"out\" type=\"i\" name=\"screenMode\"/>\n"
+                                        "    </signal>\n"
++                                       "    <signal name=\"screenAdded\">\n"
++                                       "      <arg direction=\"out\" type=\"s\" name=\"screenName\"/>\n"
++                                       "    </signal>\n"
++                                       "    <signal name=\"screenRemoved\">\n"
++                                       "      <arg direction=\"out\" type=\"s\" name=\"screenName\"/>\n"
++                                       "    </signal>\n"
++                                       "    <signal name=\"screenStateChanged\">\n"
++                                       "      <arg direction=\"out\" type=\"s\" name=\"screenName\"/>\n"
++                                       "      <arg direction=\"out\" type=\"i\" name=\"state\"/>\n"
++                                       "    </signal>\n"
+                                        "    <method name=\"getScreensParam\">\n"
+                                        "      <arg direction=\"out\" type=\"s\"/>\n"
+                                        "      <arg direction=\"in\" type=\"s\" name=\"appName\"/>\n"
+@@ -74,6 +84,9 @@ public Q_SLOTS: // METHODS
+ Q_SIGNALS: // SIGNALS
+     void screensParamChanged(const QString &screensParam);
+     void screenModeChanged(const int screenMode);
++    void screenAdded(QString screenName);
++    void screenRemoved(QString screenName);
++    void screenStateChanged(QString screenName, bool state);
+ };
+ 
+ #endif
+diff --git a/plugins/xrandr/xrandr-dbus.cpp b/plugins/xrandr/xrandr-dbus.cpp
+index c2d172a..da8d87f 100644
+--- a/plugins/xrandr/xrandr-dbus.cpp
++++ b/plugins/xrandr/xrandr-dbus.cpp
+@@ -59,6 +59,10 @@ int xrandrDbus::setScreenMode(QString modeName,QString appName){
+ 
+ int xrandrDbus::getScreenMode(QString appName){
+     USD_LOG(LOG_DEBUG,"get screen mode appName:%s", appName.toLatin1().data());
++    if (!xrandrManager->getInitialState()) {
++        USD_LOG(LOG_DEBUG,"need init .");
++        return 0;
++    }
+     return xrandrManager->discernScreenMode();
+ }
+ 
+@@ -91,7 +95,25 @@ void xrandrDbus::sendModeChangeSignal(int screensMode)
+ void xrandrDbus::sendScreensParamChangeSignal(QString screensParam)
+ {
+ //    USD_LOG(LOG_DEBUG,"send param:%s",screensParam.toLatin1().data());
+-     Q_EMIT screensParamChanged(screensParam);
++    Q_EMIT screensParamChanged(screensParam);
++}
++
++void xrandrDbus::sendScreenAddedSignal(QString screenName)
++{
++    USD_LOG(LOG_DEBUG,".");
++    Q_EMIT screenAdded(screenName);
++}
++
++void xrandrDbus::sendScreenRemovedSignal(QString screenName)
++{
++    USD_LOG(LOG_DEBUG,".");
++    Q_EMIT screenRemoved(screenName);
++}
++
++void xrandrDbus::sendScreenStateChangedSignal(QString screenName, bool state)
++{
++    USD_LOG(LOG_DEBUG,".");
++    Q_EMIT screenStateChanged(screenName, state);
+ }
+ 
+ void xrandrDbus::setScreenMap()
+diff --git a/plugins/xrandr/xrandr-dbus.h b/plugins/xrandr/xrandr-dbus.h
+index cec9a1c..0842929 100644
+--- a/plugins/xrandr/xrandr-dbus.h
++++ b/plugins/xrandr/xrandr-dbus.h
+@@ -36,7 +36,9 @@ public:
+ 
+     void sendModeChangeSignal(int screensMode);
+     void sendScreensParamChangeSignal(QString screensParam);
+-
++    void sendScreenAddedSignal(QString screenName);
++    void sendScreenRemovedSignal(QString screenName);
++    void sendScreenStateChangedSignal(QString screenName, bool state);
+ public Q_SLOTS:
+     int setScreenMode(QString modeName, QString appName);
+     int getScreenMode(QString appName);
+@@ -64,7 +66,9 @@ Q_SIGNALS:
+     //控制面板旋转触摸映射
+     void controlScreen(QString conRotation);
+ 
+-
++    void screenAdded(QString screenName);
++    void screenRemoved(QString screenName);
++    void screenStateChanged(QString screenName, int state);
+ public:
+     int mX = 0;
+     int mY = 0;
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index fbcb2ce..faab4f9 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -30,23 +30,14 @@
+ #include <QtConcurrent/QtConcurrent>
+ 
+ #include "xrandr-manager.h"
+-
++#include "touch-calibrate.h"
+ #include <QOrientationReading>
+ #include <memory>
+-
+-
+ #include <QDBusMessage>
+ 
+ extern "C"{
+-#include <glib.h>
+-//#include <X11/Xlib.h>
+-#include <X11/extensions/XInput2.h>
+-#include <X11/extensions/XInput.h>
+ #include <X11/extensions/Xrandr.h>
+-#include <xorg/xserver-properties.h>
+-#include <gudev/gudev.h>
+ #include "clib-syslog.h"
+-#include <libudev.h>
+ }
+ 
+ #define SETTINGS_XRANDR_SCHEMAS     "org.ukui.SettingsDaemon.plugins.xrandr"
+@@ -55,18 +46,6 @@ extern "C"{
+ #define XSETTINGS_SCHEMA            "org.ukui.SettingsDaemon.plugins.xsettings"
+ #define XSETTINGS_KEY_SCALING       "scaling-factor"
+ 
+-
+-
+-#define MAP_CONFIG "/.config/touchcfg.ini"
+-#define MONITOR_NULL_SERIAL "kydefault"
+-
+-unsigned char *getDeviceNode (XIDeviceInfo devinfo);
+-typedef struct
+-{
+-    unsigned char *input_node;
+-    XIDeviceInfo dev_info;
+-}TsInfo;
+-
+ XrandrManager::XrandrManager():
+     m_outputsChangedSignal(eScreenSignal::isNone),
+     m_acitveTimer(new QTimer(this)),
+@@ -136,33 +115,11 @@ XrandrManager::XrandrManager():
+                                                      QString("configChanged"),
+                                                      this,
+                                                      SLOT(configChangedSlot(QVariantMap)));
+-
+-    udevThread = new udevInput;
+-    udevThread->start();
+-    connect(udevThread,&udevInput::plugEvent,this,&XrandrManager::touchHotPlugSlot);
+-
+-}
+-
+-void XrandrManager::touchHotPlugSlot(bool action)
+-{
+-    static bool isRunning = false;
+-    USD_LOG(LOG_DEBUG,"---- touch hot plug:%d ----",action);
+-    if(action) {
+-        if(!isRunning) {
+-	    isRunning = true;
+-	    QTimer::singleShot(350,this,[=]() {
+-	        USD_LOG(LOG_DEBUG,"need to calibrate touch device ? try it");
+-		calibrateTouchDevice();
+-		isRunning = false;
+-            });
+-	}    
+-    }
+ }
+ 
+ //获取
+ void XrandrManager::configChangedSlot(QVariantMap config)
+ {
+-    qDebug() << " --------------------------------------";
+     if(isApplied) {
+         isApplied = false;
+         sendOutputsModeToDbus();
+@@ -221,8 +178,6 @@ XrandrManager::~XrandrManager()
+         delete m_xrandrSettings;
+         m_xrandrSettings = nullptr;
+     }
+-    qDeleteAll(m_touchMapList);
+-    m_touchMapList.clear();
+ }
+ 
+ bool XrandrManager::start()
+@@ -238,150 +193,6 @@ void XrandrManager::stop()
+      USD_LOG(LOG_DEBUG,"Xrandr Manager Stop");
+ }
+ 
+-/*查找触摸屏设备ID*/
+-static bool
+-find_touchscreen_device(Display* display, XIDeviceInfo *dev)
+-{
+-    int i = 0;
+-    if (dev->use != XISlavePointer) {
+-        return false;
+-    }
+-
+-    if (!dev->enabled) {
+-        USD_LOG(LOG_DEBUG,"%s device is disabled.",dev->name);
+-        return false;
+-    }
+-
+-    QString devName = QString::fromUtf8(dev->name);
+-    if (devName.toUpper().contains("TOUCHPAD")) {
+-        return true;
+-    }
+-
+-    for (int j = 0; j < dev->num_classes; j++) {
+-        if (dev->classes[j]->type == XITouchClass) {
+-                USD_LOG(LOG_DEBUG,"%s type:%d ", dev->name, dev->classes[i]->type);
+-                return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-/* Get device node for gudev
+-   node like "/dev/input/event6"
+- */
+-unsigned char *
+-getDeviceNode (XIDeviceInfo devinfo)
+-{
+-    Atom  prop;
+-    Atom act_type;
+-    int  act_format;
+-    unsigned long nitems, bytes_after;
+-    unsigned char *data;
+-
+-    prop = XInternAtom(QX11Info::display(), XI_PROP_DEVICE_NODE, False);
+-    if (!prop) {
+-        return NULL;
+-    }
+-
+-    if (XIGetProperty(QX11Info::display(), devinfo.deviceid, prop, 0, 1000, False,
+-                      AnyPropertyType, &act_type, &act_format, &nitems, &bytes_after, &data) == Success) {
+-        return data;//free in calibrateTouchScreen
+-    }
+-    return NULL;
+-}
+-
+-/* Get touchscreen info */
+-GList *
+-getTouchscreen(Display* display)
+-{
+-    Q_UNUSED(display);
+-
+-    gint n_devices;
+-    XIDeviceInfo *devsInfo;
+-    GList *tsDevs = NULL;
+-    Display *dpy = QX11Info::display();
+-    devsInfo = XIQueryDevice(dpy, XIAllDevices, &n_devices);
+-
+-    for (int i = 0; i < n_devices; i ++) {
+-        if (find_touchscreen_device(dpy, &devsInfo[i])) {
+-            unsigned char *node;
+-            TsInfo *tsInfo = g_new(TsInfo, 1);
+-            node = getDeviceNode(devsInfo[i]);
+-
+-            if (node) {
+-                tsInfo->input_node = node;
+-                tsInfo->dev_info = devsInfo[i];
+-                tsDevs = g_list_append(tsDevs, tsInfo);
+-            }
+-        }
+-    }
+-
+-    return tsDevs;
+-}
+-
+-bool checkMatch(double output_width,  double output_height,
+-                double input_width, double input_height)
+-{
+-    double w_diff, h_diff;
+-
+-    w_diff = ABS(1 - (output_width / input_width));
+-    h_diff = ABS(1 - (output_height / input_height));
+-    USD_LOG(LOG_DEBUG,"w_diff--------%f,h_diff----------%f",w_diff,h_diff);
+-
+-    if (w_diff < MAX_SIZE_MATCH_DIFF && h_diff < MAX_SIZE_MATCH_DIFF) {
+-        return true;
+-    }
+-    return false;
+-}
+-
+-/* Here to run command xinput
+-   更新触摸屏触点位置
+-*/
+-
+-void XrandrManager::calibrateDevice(int input_name, char *output_name , bool isRemapFromFile)
+-{
+-    if(!UsdBaseClass::isTablet()) {
+-        touchpadMap *map = new touchpadMap;
+-        map->sMonitorName = QString(output_name);
+-        map->sTouchId = input_name;
+-        m_touchMapList.append(map);
+-    }
+-
+-    char buff[128] = "";
+-    sprintf(buff, "xinput --map-to-output \"%d\" \"%s\"", input_name, output_name);
+-    USD_LOG(LOG_DEBUG,"map touch-screen [%s]\n", buff);
+-    QProcess::execute(buff);
+-}
+-
+-bool XrandrManager::getOutputConnected(QString screenName)
+-{
+-    Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
+-        if (output->isConnected() && output->name() == screenName ) {
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-bool XrandrManager::getTouchDeviceCalibrateState(int id)
+-{
+-    Q_FOREACH(touchpadMap *map,m_touchMapList) {
+-        if(map->sTouchId == id) {
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+-
+-bool XrandrManager::getOutputCalibrateState(const QString name)
+-{
+-    Q_FOREACH(touchpadMap *map,m_touchMapList) {
+-        if(map->sMonitorName == name) {
+-            return true;
+-        }
+-    }
+-    return false;
+-}
+ /*
+  * 通过ouput的pnpId和monitors.xml中的ventor以及接口类型（VGA,HDMI）进行匹配
+  *
+@@ -596,6 +407,11 @@ FINISH:
+     return ret;
+ }
+ 
++bool XrandrManager::getInitialState()
++{
++    return m_isInitFinish;
++}
++
+ int XrandrManager::getMateConfigParam(UsdOuputProperty *mateOutput, QString param)
+ {
+     bool isOk;
+@@ -609,296 +425,6 @@ int XrandrManager::getMateConfigParam(UsdOuputProperty *mateOutput, QString para
+     return ret;
+ }
+ 
+-int getMapInfoListFromConfig(QString confPath,MapInfoFromFile* mapInfoList)
+-{
+-    int ret = -1;
+-    QSettings *configIniRead = new QSettings(confPath, QSettings::IniFormat);
+-    int mapNum = configIniRead->value("/COUNT/num").toInt();
+-    if (mapNum < 1) {
+-        return ret;
+-    }
+-    for (int i = 0; i < mapNum ;++i) {
+-        QString mapName = QString("/MAP%1/%2");
+-        QString touchName = configIniRead->value(mapName.arg(i+1).arg("name")).toString();
+-        QString scrname = configIniRead->value(mapName.arg(i+1).arg("scrname")).toString();
+-        QString serial = configIniRead->value(mapName.arg(i+1).arg("serial")).toString();
+-        if(NULL != touchName) {
+-            mapInfoList[i].sTouchName = touchName;
+-        }
+-        if(NULL != scrname) {
+-            mapInfoList[i].sMonitorName = scrname;
+-        }
+-        if(NULL != serial) {
+-            mapInfoList[i].sTouchSerial = serial;
+-        }
+-    }
+-    return mapNum;
+-}
+-
+-/*
+- *
+- * 触摸设备映射方案：
+- * 首先找出输出设备的尺寸，然后找到触摸设备的尺寸，最后如果尺寸一致，则为一一对应的关系，需要处理映射。
+- *
+- */
+-
+-void XrandrManager::calibrateTouchScreen()
+-{
+-    int     event_base, error_base, major, minor;
+-    int     o;
+-    int     xscreen;
+-
+-    Window  root;
+-    XRRScreenResources *res;
+-    Display *dpy = QX11Info::display();
+-    GList *tsDevs = getTouchscreen (dpy);
+-
+-    if (!g_list_length (tsDevs)) {
+-        fprintf(stdin, "No touchscreen find...\n");
+-        return;
+-    }
+-
+-    GList *l = NULL;
+-
+-    if (!XRRQueryExtension (dpy, &event_base, &error_base) ||
+-        !XRRQueryVersion (dpy, &major, &minor)) {
+-        fprintf (stderr, "RandR extension missing\n");
+-        return;
+-    }
+-
+-    xscreen = DefaultScreen (dpy);
+-    root = RootWindow (dpy, xscreen);
+-
+-    if ( major >= 1 && minor >= 5) {
+-        res = XRRGetScreenResources (dpy, root);
+-        if (!res)
+-          return;
+-
+-        for (o = 0; o < res->noutput; o++) {
+-            bool kscreenHadMap = false;
+-            XRROutputInfo *output_info = XRRGetOutputInfo (dpy, res, res->outputs[o]);
+-            if (!output_info){
+-                fprintf (stderr, "could not get output 0x%lx information\n", res->outputs[o]);
+-                continue;
+-            }
+-            int output_mm_width = output_info->mm_width;
+-            int output_mm_height = output_info->mm_height;
+-
+-            if (output_info->connection == 0) {
+-                if(getOutputCalibrateState(QString(output_info->name))) {
+-                    continue;
+-                }
+-                USD_LOG(LOG_DEBUG,"output_info->name : %s ",output_info->name);
+-                for ( l = tsDevs; l; l = l->next) {
+-
+-                    TsInfo *info = (TsInfo *)l -> data;
+-
+-                    if(getTouchDeviceCalibrateState(info->dev_info.deviceid)) {
+-                        continue;
+-                    }
+-                    gint64 width, height;
+-                    QString deviceName = QString::fromLocal8Bit(info->dev_info.name);
+-                    QString ouputName = QString::fromLocal8Bit(output_info->name);
+-                    const char *udev_subsystems[] = {"input", NULL};
+-
+-                    GUdevDevice *udev_device;
+-                    GUdevClient *udev_client = g_udev_client_new (udev_subsystems);
+-                    udev_device = g_udev_client_query_by_device_file (udev_client,
+-                                                                      (const gchar *)info->input_node);
+-
+-                    USD_LOG(LOG_DEBUG,"%s(%d) %d %d had touch",info->dev_info.name,info->dev_info.deviceid,g_udev_device_has_property(udev_device,"ID_INPUT_WIDTH_MM"), g_udev_device_has_property(udev_device,"ID_INPUT_HEIGHT_MM"));
+-                    //sp1的触摸板不一定有此属性，所以根据名字进行适配by sjh 2021年10月20日11:23:58
+-                    if ((udev_device && g_udev_device_has_property (udev_device,
+-                                                                   "ID_INPUT_TOUCHSCREEN")) || g_udev_device_has_property(udev_device,"ID_INPUT_TABLET")) {
+-                        char *touchDevicePath = NULL;
+-                        width = g_udev_device_get_property_as_uint64 (udev_device,
+-                                                                    "ID_INPUT_WIDTH_MM");
+-                        height = g_udev_device_get_property_as_uint64 (udev_device,
+-                                                                     "ID_INPUT_HEIGHT_MM");
+-
+-                        /*对于笔记本而言，i2c接口的触摸类（触摸类设备不一定都是i2c接口，如部分usd接口的touchpad）
+-                         * 基本属于自带触摸屏，内置触控笔，所以判断outputname是否为eDP-1，接口是否为i2c来判断是否需要映射到内屏。*/
+-
+-//                        if (UsdBaseClass::isTablet()) //按道理只有笔记本才可以做此操作，但是平板没有盖子无法判断笔记本。
+-                        {
+-                            if (g_udev_device_has_property (udev_device,"ID_PATH")) {
+-                                touchDevicePath = (char *)g_udev_device_get_property(udev_device,"ID_PATH");
+-                                if (strstr(touchDevicePath,"i2c") && strstr(touchDevicePath,"pci") && ouputName == "eDP-1") {
+-                                    calibrateDevice(info->dev_info.deviceid,output_info->name);
+-                                    kscreenHadMap = true;
+-                                }
+-                            }
+-                        }
+-
+-                        if (checkMatch(output_mm_width, output_mm_height, width, height)) {//
+-                            if (kscreenHadMap) {
+-                                continue;
+-                            }
+-                            kscreenHadMap = true;
+-                            calibrateDevice(info->dev_info.deviceid,output_info->name);
+-                            USD_LOG(LOG_DEBUG,".map checkMatch");
+-                            if (ouputName != "eDP-1") {
+-                                break;
+-                            }
+-                        }/* else if (deviceName.toUpper().contains("TOUCHPAD") && ouputName == "eDP-1"){//触摸板只映射主屏幕
+-                            USD_LOG(LOG_DEBUG,".map touchpad.");
+-//                            doRemapAction(info->dev_info.deviceid,output_info->name);
+-//                            break;
+-                            continue;//笔记本可能带有触摸板，触摸屏，触摸笔三个触摸设备映射到一个显示器中
+-                        }*/
+-                    }
+-                    g_clear_object (&udev_client);
+-                }
+-                /*屏幕尺寸与触摸设备对应不上且未映射，映射剩下的设备*/
+-                for ( l = tsDevs; l; l = l->next) {
+-                    TsInfo *info = (TsInfo *)l -> data;
+-
+-                    if(getOutputCalibrateState(QString(output_info->name)) || getTouchDeviceCalibrateState(info->dev_info.deviceid)) {
+-                        continue;
+-                    }
+-                    const char *udevSubsystems[] = {"input", NULL};
+-                    GUdevDevice *udevDevice;
+-                    GUdevClient *udevClient = g_udev_client_new (udevSubsystems);
+-                    udevDevice = g_udev_client_query_by_device_file (udevClient,
+-                                                                      (const gchar *)info->input_node);
+-                    USD_LOG(LOG_DEBUG,"Size correspondence error");
+-                    if ((udevDevice && g_udev_device_has_property (udevDevice,
+-                                                                    "ID_INPUT_TOUCHSCREEN")) || g_udev_device_has_property(udevDevice,"ID_INPUT_TABLET")) {
+-                        calibrateDevice(info->dev_info.deviceid,output_info->name);
+-                    }
+-                    g_clear_object (&udevClient);
+-                }
+-            }
+-        }
+-    } else {
+-        USD_LOG(LOG_DEBUG,"xrandr extension too low");
+-    }
+-
+-    for (l = tsDevs; l; l = l->next) {
+-        TsInfo *info = (TsInfo *)l -> data;
+-        XFree(info->input_node);
+-    }
+-    g_list_free(tsDevs);
+-}
+-
+-
+-void XrandrManager::calibrateTouchScreenInTablet()
+-{
+-    int     event_base, error_base, major, minor;
+-    int     o;
+-    Window  root;
+-    int     xscreen;
+-    XRRScreenResources *res;
+-    Display *dpy = QX11Info::display();
+-    GList *tsDevs = NULL;
+-
+-    tsDevs = getTouchscreen (dpy);
+-
+-    if (!g_list_length (tsDevs)) {
+-        fprintf(stdin, "No touchscreen find...\n");
+-        return;
+-    }
+-
+-    GList *l = NULL;
+-
+-    if (!XRRQueryExtension (dpy, &event_base, &error_base) ||
+-        !XRRQueryVersion (dpy, &major, &minor)) {
+-        fprintf (stderr, "RandR extension missing\n");
+-        return;
+-    }
+-
+-    xscreen = DefaultScreen (dpy);
+-    root = RootWindow (dpy, xscreen);
+-
+-    if ( major >= 1 && minor >= 5) {
+-        res = XRRGetScreenResources(dpy, root);
+-        if (!res)
+-          return;
+-
+-        for (o = 0; o < res->noutput; o++) {
+-            XRROutputInfo *outputInfo = XRRGetOutputInfo(dpy, res, res->outputs[o]);
+-            if (!outputInfo) {
+-                fprintf (stderr, "could not get output 0x%lx information\n", res->outputs[o]);
+-                continue;
+-            }
+-            int output_mm_width = outputInfo->mm_width;
+-            int output_mm_height = outputInfo->mm_height;
+-
+-            if (outputInfo->connection == 0) {
+-                for (l=tsDevs; l; l=l->next) {
+-                    TsInfo *info = (TsInfo *)l->data;
+-                    double width, height;
+-                    const char *udev_subsystems[] = {"input", NULL};
+-
+-                    GUdevDevice *udevDevice;
+-                    GUdevClient *udevClient = g_udev_client_new (udev_subsystems);
+-                    udevDevice = g_udev_client_query_by_device_file (udevClient,
+-                                                                      (const gchar *)info->input_node);
+-
+-                    USD_LOG(LOG_DEBUG,"%s(%d) %d %d had touch",info->dev_info.name,info->dev_info.deviceid, g_udev_device_has_property(udevDevice,"ID_INPUT_WIDTH_MM"),
+-                            g_udev_device_has_property(udevDevice,"ID_INPUT_HEIGHT_MM"));
+-
+-                    //sp1的触摸板不一定有此属性，所以根据名字进行适配by sjh 2021年10月20日11:23:58
+-                    if ((udevDevice && (udevDevice && g_udev_device_has_property (udevDevice,
+-                                                                                    "ID_INPUT_TOUCHSCREEN")) || g_udev_device_has_property(udevDevice,"ID_INPUT_TABLET"))) {
+-                        width = g_udev_device_get_property_as_double (udevDevice,
+-                                                                    "ID_INPUT_WIDTH_MM");
+-                        height = g_udev_device_get_property_as_double (udevDevice,
+-                                                                     "ID_INPUT_HEIGHT_MM");
+-
+-                        if (checkMatch(output_mm_width, output_mm_height, width, height)) {//
+-                            USD_LOG(LOG_DEBUG,".output_mm_width:%d  output_mm_height:%d  width:%d. height:%d",output_mm_width,output_mm_height,width,height);
+-                            calibrateDevice(info->dev_info.deviceid,outputInfo->name);
+-                        }/* else if (deviceName.toUpper().contains("TOUCHPAD") && ouputName == "eDP-1"){//触摸板只映射主屏幕
+-                            USD_LOG(LOG_DEBUG,".map touchpad.");
+-                            doRemapAction(info->dev_info.deviceid,output_info->name);
+-                        }*/
+-                    }
+-                    g_clear_object (&udevClient);
+-                }
+-            }
+-        }
+-    } else {
+-        USD_LOG(LOG_DEBUG,"xrandr extension too low");
+-    }
+-
+-    for (l=tsDevs; l; l=l->next) {
+-        TsInfo *info = (TsInfo *)l->data;
+-        XFree(info->input_node);
+-    }
+-    g_list_free(tsDevs);
+-}
+-
+-void XrandrManager::calibrateTouchDeviceWithConfigFile(QString mapPath)
+-{
+-    MapInfoFromFile mapInfoList[64];
+-    int deviceId = 0;
+-    int mapNum = getMapInfoListFromConfig(mapPath,mapInfoList);
+-    USD_LOG(LOG_DEBUG,"getMapInfoListFromConfig : %d",mapNum);
+-    for (int i = 0; i<mapNum; ++i) {
+-        GList *tsDevs = getTouchscreen (QX11Info::display());
+-        GList *l = NULL;
+-        for ( l = tsDevs; l; l = l->next) {
+-            TsInfo *info = (TsInfo *)l -> data;
+-            QString name = QString::fromLocal8Bit(info->dev_info.name);
+-            USD_LOG(LOG_DEBUG,"find device:%s，%d",name.toLatin1().data(),info->dev_info.deviceid);
+-            if (name == mapInfoList[i].sTouchName) {
+-                USD_LOG(LOG_DEBUG,"calibration device:%s:%d",name.toLatin1().data(),info->dev_info.deviceid);
+-                if(getOutputConnected(mapInfoList[i].sMonitorName)) {
+-                    calibrateDevice(info->dev_info.deviceid,mapInfoList[i].sMonitorName.toLatin1().data(),true);
+-                }
+-                break;
+-            }
+-        }
+-
+-        for (l = tsDevs; l; l = l->next) {
+-            TsInfo *info = (TsInfo *)l -> data;
+-            XFree(info->input_node);
+-        }
+-        g_list_free(tsDevs);
+-    }
+-}
+-
+ /*监听旋转键值回调 并设置旋转角度*/
+ void XrandrManager::doRotationChanged(const QString &rotation)
+ {
+@@ -1009,22 +535,13 @@ void XrandrManager::calibrateTouchDevice()
+     }
+     oldOutputs = m_outputsConfig->data()->clone();
+     if (needSetMapTouchDevice) {
+-        if (UsdBaseClass::isTablet()) {
+-            calibrateTouchScreenInTablet();
+-        } else {
+-            qDeleteAll(m_touchMapList);
+-            m_touchMapList.clear();
+-            QString configPath = QDir::homePath() +  MAP_CONFIG;
+-            QFileInfo file(configPath);
+-            if(file.exists()) {
+-                calibrateTouchDeviceWithConfigFile(configPath);
+-            }
+-            calibrateTouchScreen();
+-        }
++        QString path = QDir::homePath() + "/.config/touchcfg.ini";
++        TouchCalibrate *calibrate = new TouchCalibrate(path);
++        calibrate->calibrate();
++        calibrate->deleteLater();
+     }
+ }
+ 
+-
+ void XrandrManager::sendOutputsModeToDbus()
+ {
+     const QStringList ukccModeList = {"first", "copy", "expand", "second"};
+@@ -1173,6 +690,7 @@ void XrandrManager::doOutputAdded(const KScreen::OutputPtr &output)
+ 
+         },Qt::QueuedConnection);
+     }
++    m_xrandrDbus->sendScreenAddedSignal(output->name());
+     m_onUsbScreenTimer->start(2500);
+ }
+ 
+@@ -1183,6 +701,14 @@ void XrandrManager::doOutputRemoved(int outputId)
+         return;
+      }
+ 
++     Q_FOREACH(const KScreen::OutputPtr &output,m_outputsConfig->data()->outputs()) {
++         if (output->id() == outputId) {
++             USD_LOG_SHOW_OUTPUT(output);
++             m_xrandrDbus->sendScreenRemovedSignal(output->name());
++             break;
++         }
++     }
++
+      m_outputsConfig->data()->removeOutput(outputId);
+      std::unique_ptr<xrandrConfig> MonitoredConfig = m_outputsConfig->readFile(false);
+      if (MonitoredConfig == nullptr ) {
+@@ -1340,6 +866,7 @@ void XrandrManager::doOutputChanged(KScreen::Output *senderOutput)
+                 if (MonitoredConfig!=nullptr) {
+                     std::unique_ptr<xrandrConfig> MonitoredConfig  = m_outputsConfig->readFile(false);
+                     m_outputsConfig = std::move(MonitoredConfig);
++                     USD_LOG(LOG_DEBUG,"read config file success! ");
+                     this->isDefaultStatus = false;
+                     Q_FOREACH(const KScreen::OutputPtr &output,m_outputsConfig->data()->outputs()) {
+                         //发现插进来的显示器是关的，应当设置为开启
+@@ -1582,7 +1109,7 @@ int XrandrManager::initAllOutputs()
+                 USD_LOG(LOG_DEBUG,"had a bug..");
+                 return;
+             }
+-
++            bool prefferedModeHadChanged = false;
+             if (UsdBaseClass::isJJW7200()){
+                  Q_FOREACH(const KScreen::OutputPtr &output,m_outputsConfig->data()->outputs()) {
+                      if (output->name()==senderOutput->name()) {
+@@ -1607,15 +1134,21 @@ int XrandrManager::initAllOutputs()
+                         }
+                         output->setEnabled(senderOutput->isConnected());
+                         output->setConnected(senderOutput->isConnected());
+-                        output->setModes(senderOutput->modes());
+-                        USD_LOG(LOG_DEBUG,"old mode id:%s", output->preferredModeId().toLatin1().data());
+-                        output->setPreferredModes(senderOutput->preferredModes());
+-                        USD_LOG(LOG_DEBUG,"new mode id:%s", output->preferredModeId().toLatin1().data());
++                        if (output->preferredModeId() != senderOutput->preferredModeId()) {
++                            output->setModes(senderOutput->modes());
++                            USD_LOG(LOG_DEBUG,"old mode id:%s", output->preferredModeId().toLatin1().data());
++                            output->setPreferredModes(senderOutput->preferredModes());
++                            USD_LOG(LOG_DEBUG,"new mode id:%s", output->preferredModeId().toLatin1().data());
++                            prefferedModeHadChanged = true;
++                        }
+                         break;
+                     }
+                 }
+-                m_modesChangeOutputs.append(senderOutput->name());
+-                m_outputsChangedSignal |= eScreenSignal::isModesChanged;
++
++                if (prefferedModeHadChanged) {
++                    m_modesChangeOutputs.append(senderOutput->name());
++                    m_outputsChangedSignal |= eScreenSignal::isModesChanged;
++                }
+             }
+             USD_LOG(LOG_DEBUG,"%s modesChanged",senderOutput->name().toLatin1().data());
+             m_screenSignalTimer->start(SAVE_CONFIG_TIME);
+@@ -1676,7 +1209,7 @@ int XrandrManager::initAllOutputs()
+                 USD_LOG(LOG_DEBUG,"had a bug..");
+                 return;
+             }
+-
++            m_xrandrDbus->sendScreenStateChangedSignal(senderOutput->name(), senderOutput->isEnabled());
+             if (m_isSetting) {
+                 USD_LOG(LOG_ERR,"skip enable Changed signal until applyConfig over");
+                 return;
+@@ -2419,7 +1952,7 @@ void XrandrManager::setOutputsMode(QString modeName)
+ */
+ UsdBaseClass::eScreenMode XrandrManager::discernScreenMode()
+ {
+-#define  OnlyFirstScreen  ((guint8)0x01 << 0) 
++#define  OnlyFirstScreen  ((quint8)0x01 << 0) 
+ 
+     QPoint firstScreenQPoint;
+     QSize firstScreenQsize;
+@@ -2471,7 +2004,6 @@ UsdBaseClass::eScreenMode XrandrManager::discernScreenMode()
+         USD_LOG(LOG_DEBUG,"mode : cloneScreenMode");
+         return UsdBaseClass::eScreenMode::cloneScreenMode;
+     }
+-
+   
+     USD_LOG(LOG_DEBUG,"mode : extendScreenMode");
+     return UsdBaseClass::eScreenMode::extendScreenMode;
+diff --git a/plugins/xrandr/xrandr-manager.h b/plugins/xrandr/xrandr-manager.h
+index fc5a5b4..8960800 100644
+--- a/plugins/xrandr/xrandr-manager.h
++++ b/plugins/xrandr/xrandr-manager.h
+@@ -50,25 +50,9 @@
+ #include "xrandr-config.h"
+ #include "usd_base_class.h"
+ #include "usd_global_define.h"
+-#include "udev-input.h"
+ 
+ #define SAVE_CONFIG_TIME 800
+ 
+-typedef struct _MapInfoFromFile
+-{
+-    QString sTouchName;     //触摸屏的名称
+-    QString sTouchSerial;   //触摸屏的序列号
+-    QString sMonitorName;   //显示器的名称
+-}MapInfoFromFile;             //配置文件中记录的映射关系信息
+-//END 触摸屏自动映射相关
+-
+-typedef struct _TouchpadMap
+-{
+-    int     sTouchId;
+-    QString sMonitorName;   //显示器的名称
+-}touchpadMap;
+-//END 触摸屏自动映射相关
+-
+ class XrandrManager: public QObject
+ {
+     Q_OBJECT
+@@ -98,17 +82,10 @@ public:
+     bool readAndApplyOutputsModeFromConfig(UsdBaseClass::eScreenMode eMode);
+     bool checkSettable(UsdBaseClass::eScreenMode eMode);
+     void sendOutputsModeToDbus();
+-
+     void calibrateTouchDevice();
+-    void calibrateTouchDeviceWithConfigFile(QString mapPath);
+-    void calibrateTouchScreen();
+-    void calibrateTouchScreenInTablet();
+-    void calibrateDevice (int input_name, char *output_name, bool isRemapFromFile = false);
+-
+-    bool getOutputConnected(QString screenName);
+-    bool getTouchDeviceCalibrateState(int id);
+-    bool getOutputCalibrateState(const QString screenName);
++
+     bool readMateToKscreen(char monitorsCount,QMap<QString, QString> &monitorsName);
++    bool getInitialState();
+     int getMateConfigParam(UsdOuputProperty *mateOutput, QString param);
+ 
+     void setOutputEnable(QString outputName,bool isEnabled);
+@@ -131,7 +108,6 @@ public Q_SLOTS:
+     /*台式机screen旋转后触摸*/
+     void doCalibrate(const QString screenMap);
+ 
+-    void touchHotPlugSlot(bool action);
+     QString getOutputsInfo();
+ protected:
+     QMultiMap<QString, QString> m_mateFileTag; //存放标签的属性值
+@@ -166,7 +142,6 @@ private:
+     QTimer                *m_offUsbScreenTimer = nullptr;
+     QTimer                *m_onUsbScreenTimer = nullptr;
+   
+-    udevInput             *udevThread = nullptr;
+     QMetaEnum             m_outputModeEnum;
+     QGSettings            *m_xrandrSettings = nullptr;
+     QStringList           m_modesChangeOutputs;
+@@ -174,7 +149,6 @@ private:
+     QDBusInterface        *m_ukccDbus = nullptr;
+     QDBusInterface        *m_kscreenDbus = nullptr;
+     QDBusInterface        *m_statusManagerDbus = nullptr;
+-    QList<touchpadMap*>    m_touchMapList; //存储已映射的关系
+ 
+     xrandrDbus                      *m_xrandrDbus = nullptr;
+     KScreen::ConfigPtr                m_configPtr = nullptr;
+diff --git a/plugins/xrandr/xrandr.pro b/plugins/xrandr/xrandr.pro
+index 8e6a399..5fe2986 100644
+--- a/plugins/xrandr/xrandr.pro
++++ b/plugins/xrandr/xrandr.pro
+@@ -27,7 +27,6 @@ PKGCONFIG += \
+         kscreen2    \
+         x11         \
+         xi          \
+-        gudev-1.0
+ 
+ SOURCES += \
+     xrandr-adaptor.cpp \
+@@ -35,8 +34,7 @@ SOURCES += \
+     xrandr-dbus.cpp \
+     xrandr-manager.cpp \
+     xrandr-output.cpp \
+-    xrandr-plugin.cpp \
+-    udev-input.cpp
++    xrandr-plugin.cpp 
+ 
+ HEADERS += \
+     xrandr-adaptor.h \
+@@ -44,8 +42,7 @@ HEADERS += \
+     xrandr-dbus.h \
+     xrandr-manager.h \
+     xrandr-output.h \
+-    xrandr-plugin.h \
+-    udev-input.h
++    xrandr-plugin.h 
+ 
+ xrandr_lib.path  = $${PLUGIN_INSTALL_DIRS}
+ xrandr_lib.files = $$OUT_PWD/libxrandr.so

@@ -1,0 +1,8 @@
+[UKUI Settings Plugin]
+Module=app-proxy-service
+IAge=0
+Name=Application Proxy Service
+Description=Application Proxy Service
+Authors=kylinsoft
+Copyright=Copyright © 2022 kylinsoft.
+Website=

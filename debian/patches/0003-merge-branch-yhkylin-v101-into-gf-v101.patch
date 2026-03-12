@@ -1,0 +1,606 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Mon, 10 Apr 2023 15:24:28 +0800
+Subject: merge branch 'yhkylin/v101' into 'gf/v101'
+
+---
+ plugins/media-keys/pulseaudiomanager.cpp     |  54 ++++-----
+ plugins/media-keys/pulseaudiomanager.h       |   6 +-
+ plugins/media-keys/volumewindow.cpp          |   2 +-
+ plugins/mouse/mouse-manager.cpp              |  31 ++---
+ plugins/save-param/lightdm-config-helper.cpp |   2 +-
+ plugins/save-param/save-param.pro            |   8 +-
+ plugins/xrandr/xrandr-manager.cpp            |  12 +-
+ plugins/xsettings/ukui-xft-settings.cpp      |   5 +
+ plugins/xsettings/ukui-xsettings-manager.cpp | 170 +++++++++++++++------------
+ plugins/xsettings/ukui-xsettings-manager.h   |  15 ++-
+ 10 files changed, 172 insertions(+), 133 deletions(-)
+
+diff --git a/plugins/media-keys/pulseaudiomanager.cpp b/plugins/media-keys/pulseaudiomanager.cpp
+index 8507193..4847be7 100644
+--- a/plugins/media-keys/pulseaudiomanager.cpp
++++ b/plugins/media-keys/pulseaudiomanager.cpp
+@@ -53,16 +53,11 @@ PulseAudioManager::~PulseAudioManager()
+ 
+ void PulseAudioManager::serverInfoCallback(pa_context *c, const pa_server_info *i, void *data)
+ {
+-    if(c) {
+-        if(s_pulseAudioManager->m_defaultSinkName != QString(i->default_sink_name)){
+-            s_pulseAudioManager->m_defaultSinkName = QString(i->default_sink_name);
+-
+-        }
+-        if(s_pulseAudioManager->m_defaultSourceName != QString(i->default_source_name)){
+-            s_pulseAudioManager->m_defaultSourceName = QString(i->default_source_name);
+-        }
+-        pa_context_get_sink_info_by_name(c,s_pulseAudioManager->m_defaultSinkName.toLatin1().data(),sinkInfoCallback,data);
+-        pa_context_get_source_info_by_name(c,s_pulseAudioManager->m_defaultSourceName.toLatin1().data(),sourceInfoCallback,data);
++    if(c && i) {
++        s_pulseAudioManager->m_defaultSinkName = i->default_sink_name;
++        s_pulseAudioManager->m_defaultSourceName = i->default_source_name;
++        pa_context_get_sink_info_by_name(c, s_pulseAudioManager->m_defaultSinkName, sinkInfoCallback, data);
++        pa_context_get_source_info_by_name(c, s_pulseAudioManager->m_defaultSourceName, sourceInfoCallback, data);
+     }
+ }
+ 
+@@ -72,8 +67,8 @@ void PulseAudioManager::subscribeCallback(pa_context *c, pa_subscription_event_t
+         case PA_SUBSCRIPTION_EVENT_SINK:
+         case PA_SUBSCRIPTION_EVENT_SOURCE:
+             pa_operation *o;
+-            if (!(o = pa_context_get_server_info(c,serverInfoCallback,data))) {
+-                USD_LOG(LOG_WARNING,"pa_operation : get server info faild");
++            if (!(o = pa_context_get_server_info(c, serverInfoCallback, data))) {
++                USD_LOG(LOG_WARNING,"pa_operation : get server info failed");
+                 return;
+             }
+             pa_operation_unref(o);
+@@ -92,7 +87,7 @@ void PulseAudioManager::contextStateCallback(pa_context *c, void *data)
+     case PA_CONTEXT_READY:
+         pa_operation *o;
+         USD_LOG(LOG_DEBUG, "PA_CONTEXT_READY");
+-        pa_context_get_server_info(c,serverInfoCallback,data);
++        pa_context_get_server_info(c, serverInfoCallback, data);
+         pa_context_set_subscribe_callback(c, subscribeCallback, data);
+         if (!(o = pa_context_subscribe(c, (pa_subscription_mask_t)(PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE), nullptr, nullptr))) {
+             USD_LOG(LOG_WARNING,"pa_context_subscribe error .");
+@@ -114,27 +109,28 @@ void PulseAudioManager::contextStateCallback(pa_context *c, void *data)
+ void PulseAudioManager::connectPulseContext()
+ {
+     if(!(m_paThreadMainLoop = pa_threaded_mainloop_new())){
+-        USD_LOG(LOG_WARNING,"new m_paThreadMainLoop faild");
++        USD_LOG(LOG_WARNING,"new m_paThreadMainLoop failed");
+         return;
+     }
+ 
+     m_paMainloopApi = pa_threaded_mainloop_get_api(m_paThreadMainLoop);
+     if(!m_paMainloopApi){
+-        USD_LOG(LOG_WARNING,"get m_paMainloopApi faild");
++        USD_LOG(LOG_WARNING,"get m_paMainloopApi failed");
+         return;
+     }
+ 
+     if(!(m_paContext = pa_context_new(m_paMainloopApi, nullptr))){
+-        USD_LOG(LOG_WARNING,"new m_paContext faild");
++        USD_LOG(LOG_WARNING,"new m_paContext failed");
+     }
+ 
+     if(pa_context_connect(m_paContext, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0){
+         qDebug()<<"pa_context_connect";
+-        USD_LOG(LOG_WARNING,"connect pa_context faild");
++        USD_LOG(LOG_WARNING,"connect pa_context failed");
+     }
+     pa_context_set_state_callback(m_paContext, contextStateCallback, m_paMainloopApi);
++
+     if(pa_threaded_mainloop_start(m_paThreadMainLoop) < 0){
+-        USD_LOG(LOG_WARNING,"pa_threaded_mainloop_start faild");
++        USD_LOG(LOG_WARNING,"pa_threaded_mainloop_start failed");
+     }
+ }
+ 
+@@ -160,7 +156,7 @@ void PulseAudioManager::updateSinkInfo(const pa_sink_info* si)
+             m_sinkMute = si->mute;
+             Q_EMIT sinkMuteChanged(m_sinkMute);
+         }
+-        m_paSinkVolume = si->volume;
++        m_sinkChannels = si->volume.channels;
+         m_channelMap = si->channel_map;
+         m_balance = pa_cvolume_get_balance(&si->volume,&si->channel_map);
+     } else {
+@@ -195,16 +191,16 @@ void PulseAudioManager::setSinkVolume(int value)
+     }
+     pa_operation* o;
+     pa_cvolume volmue;
+-    volmue.channels = m_paSinkVolume.channels;
+-    int paValue = volToPulseVol(value);
+-    for(int i = 0; i < m_paSinkVolume.channels ; ++i){
++    volmue.channels = m_sinkChannels;
++    pa_volume_t paValue = volToPulseVol(value);
++    for(int i = 0; i < m_sinkChannels ; ++i){
+         volmue.values[i] = paValue;
+     }
+     if(m_balance != 0) {
+-        pa_cvolume_set_balance(&volmue,&m_channelMap,m_balance);
++        pa_cvolume_set_balance(&volmue, &m_channelMap, m_balance);
+     }
+-    if(!(o = pa_context_set_sink_volume_by_name(m_paContext, s_pulseAudioManager->m_defaultSinkName.toLatin1().data(), &volmue, nullptr, nullptr))) {
+-        USD_LOG(LOG_WARNING,"pa_operation : set sink volume faild");
++    if(!(o = pa_context_set_sink_volume_by_name(m_paContext, s_pulseAudioManager->m_defaultSinkName, &volmue, nullptr, nullptr))) {
++        USD_LOG(LOG_WARNING,"pa_operation : set sink volume failed");
+         return;
+     }
+     pa_operation_unref(o);
+@@ -216,8 +212,8 @@ void PulseAudioManager::setSinkMute(bool mute)
+         return;
+     }
+     pa_operation* o;
+-    if(!(o = pa_context_set_sink_mute_by_name(m_paContext, m_defaultSinkName.toLatin1().data(), mute, nullptr, nullptr))) {
+-        USD_LOG(LOG_WARNING,"pa_operation : set sink mute faild");
++    if(!(o = pa_context_set_sink_mute_by_name(m_paContext, m_defaultSinkName, mute, nullptr, nullptr))) {
++        USD_LOG(LOG_WARNING,"pa_operation : set sink mute failed");
+         return;
+     }
+     pa_operation_unref(o);
+@@ -229,8 +225,8 @@ void PulseAudioManager::setSourceMute(bool mute)
+         return;
+     }
+     pa_operation* o;
+-    if(!(o = pa_context_set_source_mute_by_name(m_paContext, m_defaultSourceName.toLatin1().data(), mute, nullptr, nullptr))) {
+-        USD_LOG(LOG_WARNING,"pa_operation : set source mute faild");
++    if(!(o = pa_context_set_source_mute_by_name(m_paContext, m_defaultSourceName, mute, nullptr, nullptr))) {
++        USD_LOG(LOG_WARNING,"pa_operation : set source mute failed");
+         return;
+     }
+     pa_operation_unref(o);
+diff --git a/plugins/media-keys/pulseaudiomanager.h b/plugins/media-keys/pulseaudiomanager.h
+index 8ac57b4..24d5012 100644
+--- a/plugins/media-keys/pulseaudiomanager.h
++++ b/plugins/media-keys/pulseaudiomanager.h
+@@ -71,15 +71,15 @@ private:
+     pa_context *m_paContext;
+     pa_mainloop_api *m_paMainloopApi;
+ 
+-    pa_cvolume m_paSinkVolume;
++    uint8_t m_sinkChannels;
+     pa_channel_map m_channelMap;
+     bool m_sinkMute;            //输出设备静音
+     int m_sinkVolume;           //输出音量值
+     int m_realSinkVolume;       //pulseaudio 内的音量值 131~65536
+     bool m_sourceMute;          //输入设备静音
+ 
+-    QString m_defaultSinkName;
+-    QString m_defaultSourceName;
++    const char* m_defaultSinkName;
++    const char* m_defaultSourceName;
+ 
+     float m_balance = 0.0f;
+ 
+diff --git a/plugins/media-keys/volumewindow.cpp b/plugins/media-keys/volumewindow.cpp
+index 69e1147..10f874f 100644
+--- a/plugins/media-keys/volumewindow.cpp
++++ b/plugins/media-keys/volumewindow.cpp
+@@ -305,7 +305,7 @@ void VolumeWindow::updateVolumeIcon()
+     if (mVolumeMuted) {
+         mIconName = allIconName[0];
+     } else {
+-        double percentage = mVolume / 100.0f;
++        qreal percentage = mVolume / 100.00;
+         if(0 <= percentage && percentage < 0.01)
+             mIconName = allIconName[0];
+         else if(percentage <= 0.33)
+diff --git a/plugins/mouse/mouse-manager.cpp b/plugins/mouse/mouse-manager.cpp
+index a6bb65a..4244c86 100644
+--- a/plugins/mouse/mouse-manager.cpp
++++ b/plugins/mouse/mouse-manager.cpp
+@@ -729,7 +729,7 @@ void MouseManager::SetMotionLibinput (XDeviceInfo *device_info , bool touchpad)
+     unsigned long nitems, bytes_after;
+     QGSettings *settings;
+ 
+-    Display * dpy = GDK_DISPLAY_XDISPLAY (gdk_display_get_default ());// gdk_x11_get_default_xdisplay ();//QX11Info::display();
++    Display * dpy = QX11Info::display();
+ 
+     union {
+         unsigned char *c;
+@@ -899,8 +899,8 @@ void MouseManager::SetTouchpadMotionAccel(XDeviceInfo *device_info)
+     unsigned long nitems, bytes_after;
+ 
+ 
+-//    Display * dpy = gdk_x11_get_default_xdisplay ();//QX11Info::display();
+-    Display * dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());//Display * dpy = QX11Info::display();
++    Display * dpy = QX11Info::display();
++//    Display * dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());//Display * dpy = QX11Info::display();
+     union {
+         unsigned char *c;
+         long *l;
+@@ -955,8 +955,8 @@ void MouseManager::SetMouseAccel(XDeviceInfo *device_info)
+     int format, rc;
+     unsigned long nitems, bytes_after;
+ 
+-    //Display * dpy = QX11Info::display();
+-    Display * dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
++    Display * dpy = QX11Info::display();
++//    Display * dpy = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+     unsigned char *data;
+     bool MouseAccel;
+ 
+@@ -1043,12 +1043,13 @@ void set_middle_button_evdev (XDeviceInfo *device_info,
+     unsigned long nitems, bytes_after;
+     unsigned char *data;
+ 
+-    Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+-   // Display * display = QX11Info::display();
++//    Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
++    Display * display = QX11Info::display();
+     prop = property_from_name ("Evdev Middle Button Emulation");
+     if (!prop) /* no evdev devices */
+         return;
+     try {
++        USD_LOG(LOG_DEBUG,"ready open:%d",device_info->id);
+         device = XOpenDevice (display, device_info->id);
+         if (device == NULL)
+             throw 1;
+@@ -1431,8 +1432,8 @@ static void set_scrolling_libinput (XDeviceInfo *device_info,
+     Atom prop, type;
+     bool want_edge, want_2fg;
+     bool want_horiz;
+-    //Display *display = QX11Info::display();
+-     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
++    Display *display = QX11Info::display();
++//     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+     prop = property_from_name ("libinput Scroll Method Enabled");
+     if (!prop)
+             return;
+@@ -1518,8 +1519,8 @@ void MouseManager::setNaturalScrollSynaptics (XDeviceInfo *device_info,
+     unsigned char* data;
+     long *ptr;
+     Atom prop, type;
+-     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+-//    Display *display = QX11Info::display();
++//     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
++    Display *display = QX11Info::display();
+     prop = property_from_name ("Synaptics Scrolling Distance");
+     if (!prop)
+             return;
+@@ -1764,8 +1765,8 @@ void SetTouchpadDoubleClick(XDeviceInfo *device_info, bool state)
+     unsigned long nitems, bytes_after;
+     unsigned char* data;
+     Atom prop, type;
+-     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+-//    Display *display = gdk_x11_get_default_xdisplay ();//QX11Info::display();
++//     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
++    Display *display = QX11Info::display();
+     prop = property_from_name ("Synaptics Gestures");
+     if (!prop)
+             return;
+@@ -1816,8 +1817,8 @@ void MouseManager::SetBottomRightClickMenu(XDeviceInfo *device_info, bool state)
+     unsigned char* data;
+     long *ptr;
+     Atom prop, type;
+-     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
+-//    Display *display = gdk_x11_get_default_xdisplay ();//QX11Info::display();
++//     Display * display = GDK_DISPLAY_XDISPLAY(gdk_display_get_default());
++    Display *display = QX11Info::display();
+     prop = property_from_name ("Synaptics Soft Button Areas");
+     if (!prop)
+             return;
+diff --git a/plugins/save-param/lightdm-config-helper.cpp b/plugins/save-param/lightdm-config-helper.cpp
+index a19eb31..8a4695a 100644
+--- a/plugins/save-param/lightdm-config-helper.cpp
++++ b/plugins/save-param/lightdm-config-helper.cpp
+@@ -84,7 +84,7 @@ double LightDmConfigHelper::getDefaultDpiScalingFactor(OutputsConfig &outputsCon
+         int width = outputsConfig.m_outputList[k]->property(OUTPUT_WIDTH).toInt();
+         int height = outputsConfig.m_outputList[k]->property(OUTPUT_HEIGHT).toInt();
+ 
+-        if (width <= 1920 && height <= 1080) {
++        if (width <= 1920 || height <= 1200) {
+             calScale = 1;
+         } else if (width <= 2560 && height <=1500) {
+             calScale = 1.5;
+diff --git a/plugins/save-param/save-param.pro b/plugins/save-param/save-param.pro
+index fa06529..f81885f 100644
+--- a/plugins/save-param/save-param.pro
++++ b/plugins/save-param/save-param.pro
+@@ -17,11 +17,11 @@ TEMPLATE = app
+ # deprecated API in order to know how to port your code away from it.
+ DEFINES += QT_DEPRECATED_WARNINGS MODULE_NAME=\\\"save-param\\\"
+ 
+-#QMAKE_CFLAGS_DEBUG -= O2
+-#QMAKE_CXXFLAGS_DEBUG -= -O2
++QMAKE_CFLAGS_DEBUG -= O2
++QMAKE_CXXFLAGS_DEBUG -= -O2
+ 
+-#QMAKE_CFLAGS_RELEASE -= O2
+-#QMAKE_CXXFLAGS_RELEASE -= -O2
++QMAKE_CFLAGS_RELEASE -= O2
++QMAKE_CXXFLAGS_RELEASE -= -O2
+ 
+ 
+ LIBS += -lX11
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index b08a460..3338d28 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -1050,9 +1050,15 @@ void XrandrManager::applyConfig()
+             m_outputsConfig->setScreenMode(m_outputModeEnum.valueToKey(discernScreenMode()));
+             writeConfig();//
+ 
+-            USD_LOG(LOG_DEBUG,"save param in lightdm-data.");
+-            subProcess.start(usdSaveParam);
+-            subProcess.waitForFinished();
++            Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()) {
++                if (output->isConnected()) {
++                    USD_LOG(LOG_DEBUG,"save param in lightdm-data.");//can't recive finished signal from getConfigOperation when output connect are 0
++                    subProcess.start(usdSaveParam);
++                    subProcess.waitForFinished();
++                    break;
++                }
++            }
++
+             m_isSetting = false;
+         });
+     } else {
+diff --git a/plugins/xsettings/ukui-xft-settings.cpp b/plugins/xsettings/ukui-xft-settings.cpp
+index e333484..2a93726 100644
+--- a/plugins/xsettings/ukui-xft-settings.cpp
++++ b/plugins/xsettings/ukui-xft-settings.cpp
+@@ -25,6 +25,11 @@
+ extern "C" {
+ #endif
+ 
++
++#include <X11/Xatom.h>
++#include <X11/Xcursor/Xcursor.h>
++#include <X11/extensions/Xfixes.h>
++
+ #include <gio/gio.h>
+ #include <glib.h>
+ #include <gdk/gdkx.h>
+diff --git a/plugins/xsettings/ukui-xsettings-manager.cpp b/plugins/xsettings/ukui-xsettings-manager.cpp
+index bbe41f4..fca70b8 100644
+--- a/plugins/xsettings/ukui-xsettings-manager.cpp
++++ b/plugins/xsettings/ukui-xsettings-manager.cpp
+@@ -23,6 +23,10 @@
+ #include <QScreen>
+ #include <qdir.h>
+ 
++#include <X11/Xatom.h>
++#include <X11/Xcursor/Xcursor.h>
++#include <X11/extensions/Xfixes.h>
++
+ #include "ukui-xsettings-manager.h"
+ #include "xsettings-manager.h"
+ #include "fontconfig-monitor.h"
+@@ -80,6 +84,15 @@ struct ukuiXSettingsManagerPrivate
+ 
+ #define USD_XSETTINGS_ERROR usd_xsettings_error_quark ()
+ 
++static gboolean setup_xsettings_managers (ukuiXSettingsManager *manager);
++
++static void
++xsettings_callback (GSettings             *gsettings,
++                    const char            *key,
++                    ukuiXSettingsManager  *manager);
++
++void update_xft_settings (ukuiXSettingsManager *manager);
++
+ enum {
+     USD_XSETTINGS_ERROR_INIT
+ };
+@@ -277,6 +290,10 @@ ukuiXSettingsManager::ukuiXSettingsManager()
+     gsettings=nullptr;
+     gsettings_font=nullptr;
+     fontconfig_handle=nullptr;
++
++    m_startTimer = new QTimer(this);
++    m_startTimer->setSingleShot(true);
++    connect(m_startTimer, SIGNAL(timeout()), this, SLOT(doStartTimer()));
+ }
+ 
+ ukuiXSettingsManager::~ukuiXSettingsManager()
+@@ -324,6 +341,85 @@ void ukuiXSettingsManager::setKwinMouseSize(int size) {
+     QDBusConnection::sessionBus().send(message);
+ }
+ 
++void ukuiXSettingsManager::doStartTimer()
++{
++    guint        i;
++      GList       *list, *l;
++
++
++      if (!setup_xsettings_managers (this)) {
++          USD_XSETTINGS_ERROR;
++          return;
++      }
++
++
++      gsettings = g_hash_table_new_full (g_str_hash, g_str_equal,
++                                         NULL, (GDestroyNotify) g_object_unref);
++      g_hash_table_insert ( gsettings,(void*)MOUSE_SCHEMA,
++                            g_settings_new (MOUSE_SCHEMA));
++      g_hash_table_insert ( gsettings,(void*)INTERFACE_SCHEMA,
++                            g_settings_new (INTERFACE_SCHEMA));
++      g_hash_table_insert ( gsettings,(void*)SOUND_SCHEMA,
++                            g_settings_new (SOUND_SCHEMA));
++      g_hash_table_insert (gsettings,(void*)XSETTINGS_PLUGIN_SCHEMA,
++                           g_settings_new (XSETTINGS_PLUGIN_SCHEMA));
++
++      double scale = UsdBaseClass::readUserConfigToLightDM(MODULE_NAME,"scaling-factor").toDouble();
++      if (scale >= 1) {
++          GSettings *gsettings;
++          gsettings = (GSettings *)g_hash_table_lookup (this->gsettings,
++                                                         XSETTINGS_PLUGIN_SCHEMA);
++           if (gsettings != NULL) {
++              if (scale == 1 || scale == 1.25 || scale == 1.5 || scale == 2) {//loongarch rc1 bate2 ,will set 0 in SCALING_FACTOR_KEY
++                  g_settings_set_double(gsettings, SCALING_FACTOR_KEY, scale);
++                  USD_LOG(LOG_DEBUG,"update %s to:%0.3f", SCALING_FACTOR_KEY, scale);
++              }
++           }
++      } else {
++          GSettings *gsettings;
++          gsettings = (GSettings *)g_hash_table_lookup (this->gsettings,
++                                                         XSETTINGS_PLUGIN_SCHEMA);
++          USD_LOG(LOG_DEBUG,"reset %s to:%0.3f", SCALING_FACTOR_KEY, 1);
++          g_settings_set_double(gsettings, SCALING_FACTOR_KEY, 1);
++      }
++
++      list = g_hash_table_get_values (gsettings);
++      for (l = list; l != NULL; l = l->next) {
++          g_signal_connect (G_OBJECT (l->data), "changed",
++                                   G_CALLBACK (xsettings_callback), this);
++
++      }
++      g_list_free (list);
++      for (i = 0; i < G_N_ELEMENTS (translations); i++) {
++          GVariant  *val;
++          GSettings *gsettings;
++          gsettings = (GSettings *)g_hash_table_lookup (this->gsettings,
++                                                         translations[i].gsettings_schema);
++          if (gsettings == NULL) {
++              USD_LOG(LOG_DEBUG,"Schemas '%s' has not been setup", translations[i].gsettings_schema);
++              continue;
++          }
++
++          val = g_settings_get_value (gsettings, translations[i].gsettings_key);
++          process_value (this, &translations[i], val);
++          g_variant_unref (val);
++      }
++
++      this->gsettings_font = g_settings_new (FONT_RENDER_SCHEMA);
++      g_signal_connect (this->gsettings_font, "changed", G_CALLBACK (xft_callback), this);
++
++      update_xft_settings (this);
++      start_fontconfig_monitor (this);
++
++
++      for (i = 0;  pManagers [i]; i++){
++          pManagers [i]->set_string ( "Net/FallbackIconTheme", "ukui");
++      }
++      for (i = 0;  pManagers [i]; i++) {
++          pManagers [i]->notify ( );
++      }
++}
++
+ static void
+ xsettings_callback (GSettings             *gsettings,
+                     const char            *key,
+@@ -462,81 +558,9 @@ void ukuiXSettingsManager::sendSessionDbus()
+ 
+ bool ukuiXSettingsManager::start()
+ {
+-    guint        i;
+-    GList       *list, *l;
+-
+-
+-    if (!setup_xsettings_managers (this)) {
+-        USD_XSETTINGS_ERROR;
+-        return false;
+-    }
+-
+-
+-    gsettings = g_hash_table_new_full (g_str_hash, g_str_equal,
+-                                       NULL, (GDestroyNotify) g_object_unref);
+-    g_hash_table_insert ( gsettings,(void*)MOUSE_SCHEMA,
+-                          g_settings_new (MOUSE_SCHEMA));
+-    g_hash_table_insert ( gsettings,(void*)INTERFACE_SCHEMA,
+-                          g_settings_new (INTERFACE_SCHEMA));
+-    g_hash_table_insert ( gsettings,(void*)SOUND_SCHEMA,
+-                          g_settings_new (SOUND_SCHEMA));
+-    g_hash_table_insert (gsettings,(void*)XSETTINGS_PLUGIN_SCHEMA,
+-                         g_settings_new (XSETTINGS_PLUGIN_SCHEMA));
+-
+-    double scale = UsdBaseClass::readUserConfigToLightDM(MODULE_NAME,"scaling-factor").toDouble();
+-    if (scale >= 1) {
+-        GSettings *gsettings;
+-        gsettings = (GSettings *)g_hash_table_lookup (this->gsettings,
+-                                                       XSETTINGS_PLUGIN_SCHEMA);
+-         if (gsettings != NULL) {
+-            if (scale == 1 || scale == 1.25 || scale == 1.5 || scale == 2) {//loongarch rc1 bate2 ,will set 0 in SCALING_FACTOR_KEY
+-                g_settings_set_double(gsettings, SCALING_FACTOR_KEY, scale);
+-                USD_LOG(LOG_DEBUG,"update %s to:%0.3f", SCALING_FACTOR_KEY, scale);
+-            }
+-         }
+-    } else {
+-        GSettings *gsettings;
+-        gsettings = (GSettings *)g_hash_table_lookup (this->gsettings,
+-                                                       XSETTINGS_PLUGIN_SCHEMA);
+-        USD_LOG(LOG_DEBUG,"reset %s to:%0.3f", SCALING_FACTOR_KEY, 1);
+-        g_settings_set_double(gsettings, SCALING_FACTOR_KEY, 1);
+-    }
+-
+-    list = g_hash_table_get_values (gsettings);
+-    for (l = list; l != NULL; l = l->next) {
+-        g_signal_connect (G_OBJECT (l->data), "changed",
+-                                 G_CALLBACK (xsettings_callback), this);
+-
+-    }
+-    g_list_free (list);
+-    for (i = 0; i < G_N_ELEMENTS (translations); i++) {
+-        GVariant  *val;
+-        GSettings *gsettings;
+-        gsettings = (GSettings *)g_hash_table_lookup (this->gsettings,
+-                                                       translations[i].gsettings_schema);
+-        if (gsettings == NULL) {
+-            USD_LOG(LOG_DEBUG,"Schemas '%s' has not been setup", translations[i].gsettings_schema);
+-            continue;
+-        }
+-
+-        val = g_settings_get_value (gsettings, translations[i].gsettings_key);
+-        process_value (this, &translations[i], val);
+-        g_variant_unref (val);
+-    }
+-
+-    this->gsettings_font = g_settings_new (FONT_RENDER_SCHEMA);
+-    g_signal_connect (this->gsettings_font, "changed", G_CALLBACK (xft_callback), this);
+-
+-    update_xft_settings (this);
+-    start_fontconfig_monitor (this);
++    m_startTimer->start(4000);
+     sendSessionDbus();
+ 
+-    for (i = 0;  pManagers [i]; i++){
+-        pManagers [i]->set_string ( "Net/FallbackIconTheme", "ukui");
+-    }
+-    for (i = 0;  pManagers [i]; i++) {
+-        pManagers [i]->notify ( );
+-    }
+     return true;
+ }
+ 
+diff --git a/plugins/xsettings/ukui-xsettings-manager.h b/plugins/xsettings/ukui-xsettings-manager.h
+index c37a90b..3c22717 100644
+--- a/plugins/xsettings/ukui-xsettings-manager.h
++++ b/plugins/xsettings/ukui-xsettings-manager.h
+@@ -20,9 +20,9 @@
+ #define UKUIXSETTINGSMANAGER_H
+ 
+ #include <glib.h>
+-#include <X11/Xatom.h>
+-#include <X11/Xcursor/Xcursor.h>
+-#include <X11/extensions/Xfixes.h>
++#include <QTimer>
++#include <QObject>
++
+ 
+ #include <glib/gi18n.h>
+ #include <gdk/gdk.h>
+@@ -32,8 +32,9 @@
+ #include "fontconfig-monitor.h"
+ 
+ 
+-class ukuiXSettingsManager
++class ukuiXSettingsManager:public QObject
+ {
++    Q_OBJECT
+ public:
+     ukuiXSettingsManager();
+     ~ukuiXSettingsManager();
+@@ -49,6 +50,12 @@ public:
+     GSettings   *gsettings_font;
+     //GSettings   *plugin_settings;
+     fontconfig_monitor_handle_t *fontconfig_handle;
++
++public Q_SLOTS:
++    void doStartTimer();
++private:
++    QTimer      *m_startTimer;
++
+ };
+ 
+ #endif // UKUIXSETTINGSMANAGER_H

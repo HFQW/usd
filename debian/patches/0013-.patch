@@ -1,0 +1,24 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Fri, 25 Aug 2023 16:36:30 +0800
+Subject: =?utf-8?b?5qOA5rWL5Yiw5bGP5bmV6YWN572u5Ye66ZSZ5pe2LOiuvue9ruS8mg==?=
+ =?utf-8?b?57qg5q2j?=
+
+---
+ plugins/xrandr/xrandr-manager.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/plugins/xrandr/xrandr-manager.cpp b/plugins/xrandr/xrandr-manager.cpp
+index cb5e58b..f5cab85 100644
+--- a/plugins/xrandr/xrandr-manager.cpp
++++ b/plugins/xrandr/xrandr-manager.cpp
+@@ -1395,6 +1395,10 @@ bool XrandrManager::checkSettable(UsdBaseClass::eScreenMode eMode)
+     int y=0;
+     bool isSameRect = true;
+ 
++    if(discernScreenMode()!= eMode) {
++        return false;
++    }
++
+     Q_FOREACH(const KScreen::OutputPtr &output, m_outputsConfig->data()->outputs()){
+         if (!output->isConnected() || !output->isEnabled()){
+             continue;

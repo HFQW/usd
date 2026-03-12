@@ -1,0 +1,3510 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Mon, 26 Jun 2023 16:03:34 +0800
+Subject: =?utf-8?b?6YGX55WZ5o+Q5Lqk6Zeu6aKY77yac2F2ZS1wYXJhbeS8mOWMlg==?=
+
+---
+ common/touch-calibrate.cpp                         |   8 +
+ common/touch-calibrate.h                           |   3 +
+ common/usd_base_class.cpp                          | 160 ++++-
+ common/usd_base_class.h                            |  37 +
+ daemon/main.cpp                                    |   3 +
+ .../app-proxy-service/proxy-service-manager.cpp    | 761 +++++++--------------
+ plugins/app-proxy-service/proxy-service-manager.h  | 104 ++-
+ plugins/authority/authority.pro                    |   8 +-
+ plugins/authority/main.cpp                         |   6 +
+ plugins/authority/procaddserver.cpp                | 349 ++++++++++
+ plugins/authority/procaddserver.h                  | 149 ++++
+ plugins/gamma-manager/gamma-manager-helper.cpp     |   5 +
+ plugins/gamma-manager/gamma-manager-thread.cpp     |   2 +-
+ plugins/kds/kds.pro                                |   2 -
+ plugins/kds/kdswidget.cpp                          |   4 +-
+ plugins/kds/kdswidget.h                            |  98 ---
+ plugins/kds/main.cpp                               |  25 +-
+ plugins/kds/widget.cpp                             |  17 +-
+ plugins/kds/widget.h                               |   5 -
+ plugins/keybindings/keybindings-manager.cpp        |  25 +-
+ plugins/keybindings/keybindings-manager.h          |   4 +
+ plugins/media-keys/acme.h                          |   3 +-
+ plugins/media-keys/mediakey-manager.cpp            | 121 +++-
+ plugins/media-keys/mediakey-manager.h              |   7 +-
+ plugins/media-keys/pulseaudiomanager.cpp           | 242 ++++---
+ plugins/media-keys/pulseaudiomanager.h             |  55 +-
+ plugins/save-param/calibrate-touch-device.cpp      |  18 +-
+ plugins/save-param/save-screen.cpp                 |  31 +-
+ plugins/save-param/save-screen.h                   |   1 +
+ plugins/xrdb/xrdb-manager.cpp                      |  76 +-
+ plugins/xrdb/xrdb-manager.h                        |   7 +-
+ 31 files changed, 1458 insertions(+), 878 deletions(-)
+ create mode 100644 plugins/authority/procaddserver.cpp
+ create mode 100644 plugins/authority/procaddserver.h
+ delete mode 100644 plugins/kds/kdswidget.h
+
+diff --git a/common/touch-calibrate.cpp b/common/touch-calibrate.cpp
+index 87e3ec0..e7137a0 100644
+--- a/common/touch-calibrate.cpp
++++ b/common/touch-calibrate.cpp
+@@ -222,6 +222,14 @@ void TouchCalibrate::getTouchConfigure()
+     }
+ }
+ 
++bool TouchCalibrate::hasTouchDevice()
++{
++    getTouchDeviceList();
++    int ret = m_touchScreenMap.count() + m_tabletMap.count();
++    SYS_LOG(LOG_DEBUG," has touch device ??? ,ret = %d",ret) ;
++    
++    return ret;
++}
+ //进行映射
+ void TouchCalibrate::calibrate()
+ {
+diff --git a/common/touch-calibrate.h b/common/touch-calibrate.h
+index 11c2b18..bef8585 100644
+--- a/common/touch-calibrate.h
++++ b/common/touch-calibrate.h
+@@ -128,6 +128,9 @@ private:
+ 
+ public:
+     void calibrate();
++
++    bool hasTouchDevice();
++
+ Q_SIGNALS:
+ private:
+     Display *m_display = nullptr;
+diff --git a/common/usd_base_class.cpp b/common/usd_base_class.cpp
+index 93f72c3..9393fe0 100644
+--- a/common/usd_base_class.cpp
++++ b/common/usd_base_class.cpp
+@@ -37,7 +37,7 @@
+ #define DBUS_INTERFACE "org.freedesktop.DBus.Properties"
+ #define POWER_OFF_CONFIG_FILE "/sys/class/dmi/id/modalias"
+ 
+-QString g_motify_poweroff;
++QString g_motify_poweroff = "";
+ #define UBC_UNSET 999
+ extern "C"{
+ #include <X11/extensions/Xrandr.h>
+@@ -367,3 +367,161 @@ QVariant UsdBaseClass::readUserConfigToLightDM(QString group, QString key, QStri
+ 
+     return ret;
+ }
++
++/*
++ *Normally, brightness are controlled by OS, but the following laptop hardware has control over them
++*/
++bool UsdBaseClass::brightnessControlByHardware(int &step)
++{
++    static int ret = -1;
++    static int hardwareStep;
++    //:rnLXKT-ZXE-N70: n70,n80z,n79
++    QList<QString> m_appointBrightness = {":rnLXKT-ZXE-N70:"};
++
++    if (ret != -1) {
++        step = hardwareStep;
++        return ret;
++    }
++
++    if (g_motify_poweroff.isEmpty()) {
++        readPowerOffConfig();
++    }
++
++    Q_FOREACH (const QString &str, m_appointBrightness) {
++        if (g_motify_poweroff.contains(str)) {
++            ret = 1;
++            hardwareStep = 5;
++            step = hardwareStep;
++            return ret;
++        }
++    }
++
++    ret = false;
++    return ret;
++}
++
++/*
++ *Normally, the flight mode is controlled by hardware, but the following laptop hardware has surrendered control
++*/
++bool UsdBaseClass::flightModeControlByHardware(int &mode)
++{
++    static int ret = -1;
++    QList<QString> m_flightControlByHardware = {":rnLXKT-ZXE-N70:"};
++
++    if (ret != -1) {
++        mode = RfkillSwitch::instance()->getCurrentFlightMode();
++        return ret;
++    }
++
++    if (g_motify_poweroff.isEmpty()) {
++        readPowerOffConfig();
++    }
++
++    Q_FOREACH (const QString &str, m_flightControlByHardware) {
++        if (g_motify_poweroff.contains(str)) {
++            ret = false;
++            break;
++        }
++    }
++
++    mode = RfkillSwitch::instance()->getCurrentFlightMode();
++    ret = ret == -1 ? true : ret;
++    return ret;
++}
++
++
++/*
++ *Normally, touchpads are controlled by OS, but the following laptop hardware has control over them
++*/
++bool UsdBaseClass::touchpadControlByHardware(int &state)
++{
++    static int ret = -1;
++    QList<QString> m_touchpadControlByHardware = {":rnLXKT-ZXE-N70:"};
++
++    if (ret == false) {
++        return ret;
++    }
++
++    if (g_motify_poweroff.isEmpty()) {
++        readPowerOffConfig();
++    }
++
++    Q_FOREACH (const QString &str, m_touchpadControlByHardware) {
++        if (g_motify_poweroff.contains(str)) {
++            bool readOK;
++            QVariant touchpadState;
++            touchpadState = UsdBaseClass::readInfoFromFile(EC_TOUCHPADSTATE);
++
++            state = touchpadState.toUInt(&readOK);
++            if (readOK) {
++                state = 0;
++            } else {
++                state = touchpadState.toUInt();
++            }
++
++            ret = true;
++            return ret;
++        }
++    }
++
++    ret = false;
++    return ret;
++}
++
++/*
++ *Normally, power mode are controlled by OS, but the following laptop hardware has control over them
++*/
++bool UsdBaseClass::powerModeControlByHardware(int &mode)
++{
++    static int ret = -1;
++    QList<QString> m_appointPowerMode = {":rnLXKT-ZXE-N70:"};
++
++    if (ret == false) {
++        return ret;
++    }
++
++    if (g_motify_poweroff.isEmpty()) {
++        readPowerOffConfig();
++    }
++
++    Q_FOREACH (const QString &str, m_appointPowerMode) {
++        if (g_motify_poweroff.contains(str)) {
++            QVariant hardMode;
++            hardMode = UsdBaseClass::readInfoFromFile(PERFORMANCE_MODE);
++            /*TODO
++               此类机型只有两种模式
++            */
++            switch (hardMode.toInt()) {
++            case 1:
++                mode = 0;//perfromace
++                break;
++            case 2:
++                mode = 2;//eco
++                break;
++            default:
++                break;
++            }
++            ret = true;
++            return ret;
++        }
++    }
++
++    ret = false;
++    return ret;
++}
++
++QVariant UsdBaseClass::readInfoFromFile(QString filePath)
++{
++     QString strData = "";
++     QFile file(filePath);
++     if (!file.exists()) {
++         return false;
++     }
++
++     if (file.open(QIODevice::ReadOnly)) {
++         strData = QString::fromLocal8Bit(file.readAll());
++         file.close();
++     }
++
++     return strData;
++}
+diff --git a/common/usd_base_class.h b/common/usd_base_class.h
+index e688c2a..0162d7c 100644
+--- a/common/usd_base_class.h
++++ b/common/usd_base_class.h
+@@ -20,11 +20,17 @@
+ #ifndef USDBASECLASS_H
+ #define USDBASECLASS_H
+ #include <QObject>
++#include <QVariant>
+ #include <QMetaEnum>
+ #include <libkysysinfo.h>
+ #include <libkycpu.h>
++
++#include "rfkillswitch.h"
+ extern QString g_motify_poweroff;
+ 
++//lenovo N70Z
++#define EC_TOUCHPADSTATE "/sys/devices/platform/lenovo_ec/touchpad"  //触摸板状态节点
++#define PERFORMANCE_MODE "/sys/devices/platform/lenovo_ec/mode"  //性能模式节点
+ 
+ 
+ class UsdBaseClass: public QObject
+@@ -42,6 +48,20 @@ public:
+ 
+     Q_ENUM(eScreenMode)
+ 
++    enum BatteryState {
++        Connected = 1,
++        Disconnect};
++
++    Q_ENUM(BatteryState)
++
++
++    enum PowerMode {
++        PerformanceMode = 0,
++        AutoMode,
++        EcoMode};
++
++    Q_ENUM(PowerMode)
++
+     static bool isTablet();
+ 
+     static bool isMasterSP1();
+@@ -77,6 +97,23 @@ public:
+     static void writeUserConfigToLightDM(QString group, QString key, QVariant value, QString userName = "");
+ 
+     static QVariant readUserConfigToLightDM(QString group, QString key, QString userName = "");
++
++    static bool getPowerModeList(QList<int> &list);
++
++/*
++ * 针对EC自己控制的硬件设备，usd先获取控制权是否在EC，然后读取状态进行状态显示。
++*/
++    static bool brightnessControlByHardware(int &step);
++
++    static bool flightModeControlByHardware(int &mode);
++
++    static bool touchpadControlByHardware(int &state);
++
++    static bool powerModeControlByHardware(int &mode);
++
++    static QVariant readInfoFromFile(QString filePath);
++private:
++
+ };
+ 
+ #endif // USDBASECLASS_H
+diff --git a/daemon/main.cpp b/daemon/main.cpp
+index c9ccad9..43dfe6f 100644
+--- a/daemon/main.cpp
++++ b/daemon/main.cpp
+@@ -157,6 +157,9 @@ static void stop_daemon ()
+         PluginManagerDBus pmd(ukuiDaemonBusName, ukuiDaemonBusPath, QDBusConnection::sessionBus());
+         QDBusPendingReply<> reply = pmd.managerStop();
+         reply.waitForFinished();
++        USD_LOG(LOG_DEBUG,"start wait");
++        sleep(3);
++        USD_LOG(LOG_DEBUG,"wait over");
+         if (reply.isValid()) {
+             //USD_LOG(LOG_DEBUG, "stop current 'ukui-settings-daemon'");
+         }
+diff --git a/plugins/app-proxy-service/proxy-service-manager.cpp b/plugins/app-proxy-service/proxy-service-manager.cpp
+index 3d01a88..f00daea 100644
+--- a/plugins/app-proxy-service/proxy-service-manager.cpp
++++ b/plugins/app-proxy-service/proxy-service-manager.cpp
+@@ -1,4 +1,4 @@
+-/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++﻿/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
+  * -*- coding: utf-8 -*-
+  *
+  * Copyright (C) 2022 KylinSoft Co., Ltd.
+@@ -19,462 +19,305 @@
+ 
+ #include "proxy-service-manager.h"
+ 
+-
+-ProxyServiceManager::ProxyServiceManager(QObject *parent) : QObject(parent)
++QJsonObject readJsonFile(QString filePath)
+ {
+-    qDBusRegisterMetaType<QStringList>();
+-    qDBusRegisterMetaType<QMap<QString, QStringList >>();
+-    QDBusConnection sessionBus = QDBusConnection::sessionBus();
+-    if (sessionBus.registerService("org.ukui.SettingsDaemon")) {
+-        sessionBus.registerObject("/org/ukui/SettingsDaemon/AppProxy",this,
+-                                  QDBusConnection::ExportAllContents);
++    QJsonObject readObj = QJsonObject();
++    if (filePath.isEmpty() || !QFile(filePath).exists()) {
++        qDebug()<<Q_FUNC_INFO<<__LINE__<<filePath<<"is not exits!";
++        return readObj;
+     }
+-}
+-
+-void ProxyServiceManager::init()
+-{
+-    m_time->stop();
+-    m_proxyInterface = new QDBusInterface("com.kylin.system.proxy",
+-                                          "/com/kylin/system/proxy/App",
+-                                          "com.kylin.system.proxy.App",
+-                                          QDBusConnection::systemBus());
+ 
+-    connect(KWindowSystem::self(), &KWindowSystem::windowAdded, this, &ProxyServiceManager::onWindowAdded);
++    QFile file(filePath);
++    file.open(QIODevice::ReadOnly);
++    QByteArray readBy = file.readAll();
++    file.close();
++    QJsonParseError error;
++    QJsonDocument readDoc = QJsonDocument::fromJson(readBy, &error);
++    if (!readDoc.isEmpty() && error.error == QJsonParseError::NoError) {
++        readObj = readDoc.object();
++    }
+ 
+-    initProxyState();
++    return readObj;
+ }
+ 
+-void ProxyServiceManager::initProxyState()
++QJsonObject dealJsonObj(const QStringList configList)
+ {
+-    QString jsonPath = QDir::homePath() + "/" + PROXYCONF_FILE;
+-    QJsonObject readObj = readJsonFile(jsonPath);
+-    if (!readObj.value(PROTOJSON_KEY_TYPE).toString().isNull()
+-        && !readObj.value(PROTOJSON_KEY_SERVER).toString().isNull()
+-        && !readObj.value(PROTOJSON_KEY_PORT).isNull()
+-        && readObj.value(PROTOJSON_KEY_STATE).toBool()) {
+-        startProxy(readObj);
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"-------------- On";
+-    } else {
+-        stopProxy();
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"-------------- Stop";
++    QJsonObject configObj = QJsonObject();
++    if (configList.isEmpty() && configList.count() < 3) {
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"configList item less!";
++        return configObj;
+     }
+-}
+ 
+-void ProxyServiceManager::start()
+-{
+-    qDebug()<<"ProxyServiceManager ---------------start";
+-
+-    m_time = new QTimer(this);
+-    connect(m_time,SIGNAL(timeout()),this,SLOT(init()));
+-    m_time->start(10);
+-}
++    configObj.insert(PROTOJSON_KEY_TYPE, QJsonValue(configList.at(0)));
++    configObj.insert(PROTOJSON_KEY_NAME, QJsonValue("default"));
++    configObj.insert(PROTOJSON_KEY_SERVER, QJsonValue(configList.at(1)));
++    QString prot = configList.at(2);
++    configObj.insert(PROTOJSON_KEY_PORT, QJsonValue(prot.toInt()));
++    switch (configList.count()) {
++    case 4:
++        configObj.insert(PROTOJSON_KEY_USRNAME, QJsonValue(configList.at(3)));
++        configObj.insert(PROTOJSON_KEY_PASSWORD, QJsonValue(""));
++        break;
+ 
++    case 5:
++        configObj.insert(PROTOJSON_KEY_USRNAME, QJsonValue(configList.at(3)));
++        configObj.insert(PROTOJSON_KEY_PASSWORD, QJsonValue(configList.at(4)));
++        break;
+ 
+-void ProxyServiceManager::stop()
+-{
+-    qDebug()<<"ProxyServiceManager ---------------stop";
++    default:
++        configObj.insert(PROTOJSON_KEY_USRNAME, QJsonValue(""));
++        configObj.insert(PROTOJSON_KEY_PASSWORD, QJsonValue(""));
++        break;
++    }
++    configObj.insert(PROTOJSON_KEY_STATE, QJsonValue(true));
++    return configObj;
+ }
+ 
+-void ProxyServiceManager::datacpy(void *dest,int dstLen, const void *src, int srcLen)
++void wirteJsonFile(QString filePath, const QJsonObject obj)
+ {
+-    if (srcLen == 0 || dest == NULL || src == NULL || dstLen == 0) {
+-        printf("error:source buffer or dest buffer is empty!\n");
++    if (filePath.isEmpty() || obj.isEmpty()) {
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"function input filePath or obj is error!";
+         return;
+     }
+-
+-    int nCount = srcLen > dstLen?dstLen:srcLen;
+-
+-    char *pDest = (char *)dest;
+-    char *pSrc = (char *)src;
+-    for(int i = 0; i < nCount; i++) {
+-        *pDest++ = *pSrc++;
+-    }
+-    return;
++    QFile file(filePath);
++    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
++    QJsonDocument writeDoc = QJsonDocument(obj);
++    file.write(writeDoc.toJson());
++    file.flush();
++    file.close();
+ }
+ 
+-
+-QString ProxyServiceManager::getTerminalOutput(const QString & strCmd)
++QStringList getAppProxyFromFile()
+ {
+-    QString strInfo;
+-    strInfo.clear();
+-    const int nMaxlen = 1024 * 500;
+-    FILE *fstream = NULL;
+-    char buff[nMaxlen] = { '\0' };
+-    char temp[1024] = { '\0' };
+-    int len = 0;
+-    int offset = 0;
+-    memset(buff, '\0', sizeof(buff));
+-    memset(temp, '\0', sizeof(temp));
+-
+-    // 通过管道来回去系统命令返回的值
+-    if (NULL == (fstream = popen(strCmd.toUtf8().data(), "r"))) {
+-        return strInfo;
+-    }
+-
+-    while (NULL != fgets(temp, sizeof(temp), fstream)) {
+-        if (temp[0] == '\0') {
+-            continue;
+-        }
+-        len = strlen(temp);
+-        if ((offset + len) > nMaxlen) {
+-            break;
++    QStringList appProxyList;
++    QString jsonPath = QDir::homePath() + "/" + APPPROXY_FILE;
++    QJsonObject readObj = readJsonFile(jsonPath);
++    QJsonArray appArray = readObj.value("application").toArray();
++    if (!appArray.isEmpty()) {
++        for (auto appItem : appArray) {
++            appProxyList.append(appItem.toString());
+         }
+-
+-        datacpy(buff + offset, sizeof(buff)-offset, temp, len);
+-        offset += len;
+     }
+-    buff[sizeof(buff) - 1] = '\0';
+-    strInfo = buff;
+-
+-    pclose(fstream);
+-
+-    return strInfo;
++    return appProxyList;
+ }
+ 
+-QStringList ProxyServiceManager::getProcAllPid(const QString& ppid)
++void ProxyServiceManager::getProxyInfoList()
+ {
+-    QStringList pid_all;
+-    pid_all.clear();
+-    if (ppid.isEmpty()) {
+-        return pid_all;
+-    }
+-
+-
+-    QString strCmd = "pgrep -P " + ppid;
+-    QString strInfo = getTerminalOutput(strCmd);
+-    if (!strInfo.isEmpty()) {
+-        QStringList pidList;
+-        pid_all.append(ppid);
+-        pidList = strInfo.split('\n');
+-        for (int i = 0; i < pidList.size(); i ++) {
+-            QString pidItem = pidList.at(i);
+-            if (pidItem.isEmpty()) {
+-                continue;
++    m_proxyExecList.clear();
++    m_proxyNameList.clear();
++    for (auto desktop : m_proxyDesktopList) {
++        if (m_appInfoMap.contains(desktop)) {
++            QMap<QString, QString> map = m_appInfoMap.value(desktop);
++            if (map.value(APPINFOMAP_KEY_KEYWORDS).contains("Android")) {
++                m_proxyExecList.append(map.value(APPINFOMAP_KEY_COMMENT));
++            } else {
++                QStringList execlist = map.value(APPINFOMAP_KEY_EXEC).split(" ");
++                m_proxyExecList.append(execlist.at(0));
+             }
+-            qDebug()<<Q_FUNC_INFO<<__LINE__<<"----"<<pidItem;
+-            pid_all.append(getProcAllPid(pidItem));
++            m_proxyNameList.append(map.value(APPINFOMAP_KEY_ICON));
+         }
+-    } else {
+-        qDebug() << Q_FUNC_INFO << __LINE__ << "get " << strCmd << "is empty";
+-        pid_all.append(ppid);
+     }
+-    return pid_all;
+ }
+ 
+-bool ProxyServiceManager::getPidByName()
++ThreadObject::ThreadObject(QObject *parent) : QObject(parent)
+ {
+-    QString strCmd = QString("ps -ef | grep tdappdesktop | awk '{printf $2;printf\"\\n\";}'");
+-    QString strInfo = getTerminalOutput(strCmd);
+-    qDebug()<<Q_FUNC_INFO<<__LINE__<<"tdappdesktop strinfo result : "<<strInfo;
+-    if (!strInfo.isEmpty()) {
+-        QStringList pidList;
+-        pidList = strInfo.split('\n');
+-        for (int i = 0; i < pidList.size(); i ++) {
+-            QString pidItem = pidList.at(i);
+-            if (pidItem.isEmpty()) {
+-                continue;
+-            }
+-            addProcDbus(pidItem.toInt());
+-            qDebug()<<Q_FUNC_INFO<<__LINE__<<"---- get Pid By Name and addProcDbus : "<<pidItem;
+-        }
+-    } else {
+-        qDebug() << Q_FUNC_INFO << __LINE__ << "get name " << strCmd << "is empty";
+-    }
+-    return true;
++    qDBusRegisterMetaType<QMap<QString, QString>>();
+ }
+ 
+-void ProxyServiceManager::onWindowAdded(WId id)
++void ThreadObject::startConnect()
+ {
+-    KWindowInfo info(id, NET::WMName | NET::WMPid, NET::WM2AllProperties);
+-    qDebug()<<Q_FUNC_INFO<<"-------------"<<"the pid is :"<<info.pid()<<info.name();
+-    QString desktopName = confirmDesktopFile(info);
+-    QStringList appProxyList = getAppProxyFromFile();
+-    QStringList pidList = getProcAllPid(QString::number(info.pid()));
+-//    pidList.append(QString::number(info.pid()));
+-    if (appProxyList.contains(desktopName) && getProxyState() == true) {
+-        if (info.name().contains("腾讯文档"))
+-        {
+-            getPidByName();
+-        }
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"the ppid is :"<<info.pid()<<info.name();
+-        for (int i = 0; i < pidList.size(); i ++) {
+-            qDebug()<<Q_FUNC_INFO<<__LINE__<<"all pid "<<i<<" is :" << pidList.at(i);
+-            QString pidItem = pidList.at(i);
+-            addProcDbus(pidItem.toInt());
+-        }
+-    }
+-    return;
++    m_proxyInterface = new QDBusInterface("com.kylin.system.proxy",
++                                          "/com/kylin/system/proxy/App",
++                                          "com.kylin.system.proxy.App",
++                                          QDBusConnection::systemBus(), this);
+ }
+ 
+-QString ProxyServiceManager::searchFromEnviron(KWindowInfo info, QFileInfoList list)
++void ThreadObject::setProxyState(bool state)
+ {
+-    QFile file("/proc/" + QString::number(info.pid()) + "/environ");
+-    file.open(QIODevice::ReadOnly);
+-    QByteArray BA = file.readAll();
+-    file.close();
+-    QList<QByteArray> list_BA = BA.split('\0');
+-
+-    QString desktopFilePath = nullptr;
+-    for (int i = 0; i < list_BA.length(); i++) {
+-        if (list_BA.at(i).startsWith("GIO_LAUNCHED_DESKTOP_FILE=")) {
+-            desktopFilePath = list_BA.at(i);
+-            desktopFilePath = desktopFilePath.mid(desktopFilePath.indexOf("=") + 1);
+-            //desktop文件地址需要重写
+-            desktopFilePath = desktopFilePath.mid(desktopFilePath.lastIndexOf("/") + 1);
+-            break;
+-        }
++    if (m_procAddServerDbus == nullptr) {
++        m_procAddServerDbus = new QDBusInterface("com.settings.daemon.qt.systemdbus",
++                                                 "/procaddserver",
++                                                 "com.settings.daemon.interface",
++                                                 QDBusConnection::systemBus(), this);
+     }
+-    //desktop文件地址重写
+-    if (!desktopFilePath.isEmpty()) {
+-        for (int i = 0; i < list.size(); i++) {
+-            QFileInfo fileInfo = list.at(i);
+-            if (fileInfo.filePath() == DESKTOP_FILE_PATH + desktopFilePath) {
+-                desktopFilePath = fileInfo.filePath();
+-                return desktopFilePath;
+-            }
++    if (m_procAddServerDbus->isValid()) {
++        if (state) {
++            m_procAddServerDbus->call(QDBus::NoBlock, "startListen", getpid());
++            connect(m_procAddServerDbus, SIGNAL(procAdd(QMap<QString, QString>)), this, SLOT(onProcAdd(QMap<QString, QString>)), Qt::QueuedConnection);
++        } else {
++            m_procAddServerDbus->call(QDBus::NoBlock, "stopListen", getpid());
++            m_procAddServerDbus->deleteLater();
++            m_procAddServerDbus = nullptr;
+         }
+     }
+-    return desktopFilePath;
+ }
+ 
+-QString ProxyServiceManager::searchAndroidApp(KWindowInfo info)
++void ThreadObject::onProcAdd(QMap<QString, QString> map)
+ {
+-    QDir androidDir = QString(QDir::homePath() + ANDROID_FILE_PATH);
+-    QFileInfoList androidList = androidDir.entryInfoList();
+-    androidList.removeAll(QDir::homePath() + ANDROID_APP_CURRENT);
+-    androidList.removeAll(QDir::homePath() + ANDROID_APP_UPER);
++    //应用代理去掉命令类的进程、PID小于等于1的进程、uid不等于当前用户的进程
++    if (map.value(PROCINFOKEY_TYPE) == "sys" || map.value(PROCINFOKEY_PID).toInt() <= 1 || map.value(PROCINFOKEY_UID).toInt() != getuid()) {
++        return;
++    }
+ 
+-    QFile file(QString("/proc/%1/cmdline").arg(info.pid()));
+-    file.open(QIODevice::ReadOnly);
+-    QByteArray cmd = file.readAll();
+-    file.close();
+-    QList<QByteArray> cmdList = cmd.split('\0');
+-    for (int i = 0; i < androidList.size(); i++) {
+-        QFileInfo fileInfo = androidList.at(i);
+-        QString desktopName = fileInfo.filePath();
+-        if (!fileInfo.filePath().endsWith(".desktop")) {
+-            continue;
+-        }
+-        desktopName = desktopName.mid(desktopName.lastIndexOf("/") + 1);
+-        desktopName = desktopName.left(desktopName.lastIndexOf("."));
+-        if(desktopName == cmdList.at(10)){
+-            return fileInfo.filePath();
++    //根据name进行匹配，忽略大小写
++    if (!map.value(PROCINFOKEY_NAME).isEmpty() && m_proxyNameList.contains(map.value(PROCINFOKEY_NAME), Qt::CaseInsensitive)) {
++        addProcDbus(map.value(PROCINFOKEY_PID).toInt());
++        return;
++    }
++
++    //根据desktop进行匹配
++    if (!map.value(PROCINFOKEY_DESKTOP).isEmpty()) {
++        if (m_proxyDesktopList.contains(map.value(PROCINFOKEY_DESKTOP))) {
++            addProcDbus(map.value(PROCINFOKEY_PID).toInt());
++        } else {
++            QStringList list = map.value(PROCINFOKEY_DESKTOP).split("/");
++            QString desktop = list.at(list.size() - 1);
++            for (QString name : m_proxyDesktopList) {
++                if (name.contains(desktop)) {
++                    addProcDbus(map.value(PROCINFOKEY_PID).toInt());
++                    break;
++                }
++            }
+         }
++        return;
+     }
+-    return nullptr;
+-}
+ 
+-QString ProxyServiceManager::compareClassName(QFileInfoList list)
+-{
+-    for (int i = 0; i < list.size(); i++) {
+-        QFileInfo fileInfo = list.at(i);;
+-        QString pathDesktopName = fileInfo.filePath();
+-        if (!fileInfo.filePath().endsWith(".desktop")) {
+-            continue;
++    //根据exec进行匹配
++    if (!map.value(PROCINFOKEY_CMDLINE).isEmpty()) {
++        QString cmdline = map.value(PROCINFOKEY_CMDLINE);
++        if (cmdline.isEmpty()) {
++            return;
+         }
+-        pathDesktopName = pathDesktopName.mid(pathDesktopName.lastIndexOf("/") + 1);
+-        pathDesktopName = pathDesktopName.left(pathDesktopName.lastIndexOf("."));
+-        if (pathDesktopName == m_classClass || pathDesktopName == m_className || pathDesktopName == m_statusName)  {
+-            return fileInfo.filePath();
++        QStringList execlist = cmdline.split(" ");
++        if (m_proxyExecList.contains(execlist.at(0), Qt::CaseInsensitive)) {
++            addProcDbus(map.value(PROCINFOKEY_PID).toInt());
+         }
+     }
+-    return nullptr;
++
+ }
+ 
+-QString ProxyServiceManager::getDesktopFileName(QString cmd)
++ProxyServiceManager::ProxyServiceManager(QObject *parent) : QObject(parent)
+ {
+-    char name[200];
+-    FILE *fp1 = NULL;
+-    if ((fp1 = popen(cmd.toStdString().data(), "r")) == NULL) {
+-        return QString();
++    qDBusRegisterMetaType<QStringList>();
++    qDBusRegisterMetaType<QMap<QString, QStringList >>();
++    QDBusConnection sessionBus = QDBusConnection::sessionBus();
++    if (sessionBus.registerService("org.ukui.SettingsDaemon")) {
++        sessionBus.registerObject("/org/ukui/SettingsDaemon/AppProxy",this,
++                                  QDBusConnection::ExportAllContents);
+     }
+-    memset(name, 0, sizeof(name));
+-    fgets(name, sizeof(name), fp1);
+-    pclose(fp1);
+-    return QString(name);
+ }
+ 
+-QString ProxyServiceManager::compareCmdExec(QFileInfoList list)
++void ProxyServiceManager::init()
+ {
+-    for (int i = 0; i < list.size(); i++) {
+-        QString cmd;
+-        QFileInfo fileInfo = list.at(i);
+-        if (!fileInfo.filePath().endsWith(".desktop")) {
+-            continue;
+-        }
+-        cmd.sprintf(GET_DESKTOP_EXEC_NAME_MAIN, fileInfo.filePath().toStdString().data());
+-        QString desktopFileExeName = getDesktopFileName(cmd).remove("\n");
++    m_time->stop();
++    m_proxyInterface = new QDBusInterface("com.kylin.system.proxy",
++                                          "/com/kylin/system/proxy/App",
++                                          "com.kylin.system.proxy.App",
++                                          QDBusConnection::systemBus(), this);
+ 
+-        if (desktopFileExeName.isEmpty()) {
+-            continue;
+-        }
++    m_thread = new QThread();
++    m_threadObj = new ThreadObject();
++    m_threadObj->moveToThread(m_thread);
++    connect(m_thread, &QThread::finished, m_thread, &QObject::deleteLater);
++    connect(m_thread, &QThread::finished, m_threadObj, &QObject::deleteLater);
+ 
+-        if (desktopFileExeName == m_cmdLine || desktopFileExeName.startsWith(m_cmdLine) || m_cmdLine.startsWith(desktopFileExeName)) {
+-            return fileInfo.filePath();
+-        }
++    connect(m_thread, &QThread::started, m_threadObj, &ThreadObject::startConnect);
++    m_thread->start();
+ 
+-        //仅仅是为了适配微信
+-        desktopFileExeName = "/usr/lib/" + desktopFileExeName;
+-        if (desktopFileExeName == m_cmdLine || desktopFileExeName.startsWith(m_cmdLine) || m_cmdLine.startsWith(desktopFileExeName)) {
+-            return fileInfo.filePath();
+-        }
+-    }
+-    return nullptr;
++    initProxyState();
+ }
+ 
+-QString ProxyServiceManager::compareCmdName(QFileInfoList list)
++void ProxyServiceManager::initAppInfoMapTemp()
+ {
+-    for (int i = 0; i < list.size(); i++) {
+-        QString cmd;
+-        QFileInfo fileInfo = list.at(i);
+-        if (!fileInfo.filePath().endsWith(".desktop")) {
+-            continue;
+-        }
+-        cmd.sprintf(GET_DESKTOP_EXEC_NAME_MAIN, fileInfo.filePath().toStdString().data());
+-        QString desktopFileExeName = getDesktopFileName(cmd).remove("\n");
+-
+-        if (desktopFileExeName.isEmpty()) {
+-            continue;
+-        }
+-
+-        if (desktopFileExeName.startsWith(m_className) || desktopFileExeName.endsWith(m_className)) {
+-            return fileInfo.filePath();
++    QStringList desktopfpList = getDesktopFilePath();
++    for (QString fd : m_appInfoMap.keys()) {
++        if (!desktopfpList.contains(fd)) {
++            m_appInfoMap.remove(fd);
+         }
+     }
+-    return nullptr;
+-}
+ 
+-QString ProxyServiceManager::compareDesktopClass(QFileInfoList list)
+-{
+-    for (int i = 0; i < list.size(); i++) {
+-        QFileInfo fileInfo = list.at(i);
+-        QString pathDesktopName = fileInfo.filePath();
+-        if (!fileInfo.filePath().endsWith(".desktop")) {
+-            continue;
+-        }
+-        pathDesktopName = pathDesktopName.mid(pathDesktopName.lastIndexOf("/") + 1);
+-        pathDesktopName = pathDesktopName.left(pathDesktopName.lastIndexOf("."));
+-
+-        if (pathDesktopName.startsWith(m_className) || pathDesktopName.endsWith(m_className)) {
+-            return fileInfo.filePath();
+-        }
+-        else if (m_className.startsWith(pathDesktopName) || m_className.endsWith(pathDesktopName)) {
+-            return fileInfo.filePath();
++    for (QString desktopfp : desktopfpList) {
++        if (!m_appInfoMap.contains(desktopfp)) {
++            QMap<QString, QString> infoMap = getDesktopFileInfo(desktopfp);
++            m_appInfoMap.insert(desktopfp, infoMap);
+         }
+     }
+-    return nullptr;
+ }
+ 
+-QString ProxyServiceManager::containsName(QFileInfoList list)
++QMap<QString, QString> ProxyServiceManager::getDesktopFileInfo(QString desktopfp)
+ {
+-    for (int i = 0; i < list.size(); i++) {
+-        QString cmd;
+-        QFileInfo fileInfo = list.at(i);
+-        QString pathDesktopName = fileInfo.filePath();
+-
+-        if (!fileInfo.filePath().endsWith(".desktop")) {
+-            continue;
+-        }
+-
+-        cmd.sprintf(GET_DESKTOP_EXEC_NAME_MAIN, fileInfo.filePath().toStdString().data());
+-        QString desktopFileExeName = getDesktopFileName(cmd).remove("\n");
+-
+-        pathDesktopName = pathDesktopName.mid(pathDesktopName.lastIndexOf("/") + 1);
+-        pathDesktopName = pathDesktopName.left(pathDesktopName.lastIndexOf("."));
+-
+-        if (pathDesktopName.contains(m_className) || desktopFileExeName.contains(m_className)) {
+-            return fileInfo.filePath();
+-        }
++    QMap<QString, QString> filemsg;
++    if (desktopfp.isEmpty()) {
++        qWarning()<<Q_FUNC_INFO<<"desktop path is empty!";
++        return filemsg;
+     }
+-    return nullptr;
++    GError **error = nullptr;
++    GKeyFileFlags flags = G_KEY_FILE_NONE;
++    GKeyFile *keyfile = g_key_file_new();
++    QByteArray fpbyte = desktopfp.toLocal8Bit();
++    char *filepath = fpbyte.data();
++    g_key_file_load_from_file(keyfile, filepath, flags, error);
++    char *name = g_key_file_get_string(keyfile, "Desktop Entry", APPINFOMAP_KEY_NAME, nullptr);
++    QString namestr = QString::fromLocal8Bit(name);
++    char *localname = g_key_file_get_locale_string(keyfile, "Desktop Entry", APPINFOMAP_KEY_NAME, nullptr, nullptr);
++    QString localnamestr = QString::fromLocal8Bit(localname);
++    char *icon = g_key_file_get_string(keyfile, "Desktop Entry", APPINFOMAP_KEY_ICON, nullptr);
++    QString iconstr = QString::fromLocal8Bit(icon);
++    char *exec = g_key_file_get_string(keyfile, "Desktop Entry", APPINFOMAP_KEY_EXEC, nullptr);
++    QString execstr = QString::fromLocal8Bit(exec);
++    char *keywords = g_key_file_get_string(keyfile, "Desktop Entry", APPINFOMAP_KEY_KEYWORDS, nullptr);
++    QString keywordsstr = QString::fromLocal8Bit(keywords);
++    char *comment = g_key_file_get_string(keyfile, "Desktop Entry", APPINFOMAP_KEY_COMMENT, nullptr);
++    QString commentstr = QString::fromLocal8Bit(comment);
++
++    filemsg.insert(APPINFOMAP_KEY_NAME, namestr);
++    filemsg.insert(APPINFOMAP_KEY_LOCALNAME, localnamestr);
++    filemsg.insert(APPINFOMAP_KEY_ICON, iconstr);
++    filemsg.insert(APPINFOMAP_KEY_KEYWORDS, keywordsstr);
++    filemsg.insert(APPINFOMAP_KEY_EXEC, execstr);
++    filemsg.insert(APPINFOMAP_KEY_COMMENT, commentstr);
++    g_key_file_free(keyfile);
++    return filemsg;
+ }
+ 
+-QString ProxyServiceManager::compareLastStrategy(QFileInfoList list)
++void ProxyServiceManager::initProxyState()
+ {
+-    QString desktopFilePath = compareCmdName(list);
+-
+-    if (desktopFilePath.isEmpty()) {
+-        desktopFilePath = compareDesktopClass(list);
+-    }
++    QString jsonPath = QDir::homePath() + "/" + PROXYCONF_FILE;
++    QJsonObject readObj = readJsonFile(jsonPath);
++    if (!readObj.value(PROTOJSON_KEY_TYPE).toString().isNull()
++        && !readObj.value(PROTOJSON_KEY_SERVER).toString().isNull()
++        && !readObj.value(PROTOJSON_KEY_PORT).isNull()
++        && readObj.value(PROTOJSON_KEY_STATE).toBool()) {
++        startProxy(readObj);
+ 
+-    if (desktopFilePath.isEmpty()) {
+-        desktopFilePath = containsName(list);
++        initAppInfoMapTemp();
++        m_proxyDesktopList = getAppProxyFromFile();
++        getProxyInfoList();
++        m_threadObj->setDesktopList(m_proxyDesktopList);
++        m_threadObj->setExecList(m_proxyExecList);
++        m_threadObj->setNameList(m_proxyNameList);
++    } else {
++        stopProxy();
+     }
+-    return desktopFilePath;
+ }
+ 
+-QString ProxyServiceManager::confirmDesktopFile(KWindowInfo info)
++void ProxyServiceManager::start()
+ {
+-    QString desktopFilePath = nullptr;
+-    QDir dir = QDir(DESKTOP_FILE_PATH);
+-    QFileInfoList list = dir.entryInfoList();
+-    //跳过 ./ 和 ../ 目录
+-    list.removeAll(QFile(USR_SHARE_APP_CURRENT));
+-    list.removeAll(QFile(USR_SHARE_APP_UPER));
+-
+-    //第一种方法：获取点击应用时大部分desktop文件名
+-    desktopFilePath = searchFromEnviron(info, list);
+-
+-    //第二种方法：比较名字一致性
+-    if (desktopFilePath.isEmpty()) {
+-        m_classClass = info.windowClassClass().toLower();
+-        m_className = info.windowClassName();
+-
+-        //匹配安卓兼容
+-        if (m_className == "kylin-kmre-window") {
+-            return searchAndroidApp(info);
+-        }
+-
+-        QFile file(QString("/proc/%1/status").arg(info.pid()));
+-        if (file.open(QIODevice::ReadOnly)) {
+-            char buf[1024];
+-            qint64 len=file.readLine(buf,sizeof(buf));
+-            if (len!=-1) {
+-                m_statusName = QString::fromLocal8Bit(buf).remove("Name:").remove("\t").remove("\n");
+-            }
+-        }
+-        desktopFilePath = compareClassName(list);
+-    }
+-
+-    //第三种方法：比较cmd命令行操作一致性
+-    if (desktopFilePath.isEmpty()) {
+-        QFile file(QString("/proc/%1/cmdline").arg(info.pid()));
+-        if (file.open(QIODevice::ReadOnly)) {
+-            char buf[1024];
+-            qint64 len=file.readLine(buf,sizeof(buf));
+-            if (len!=-1) {
+-                m_cmdLine = QString::fromLocal8Bit(buf).remove("\n");
+-            }
+-        }
+-        desktopFilePath = compareCmdExec(list);
+-    }
+-
+-    //第四种方法：匹配部分字段
+-    if (desktopFilePath.isEmpty()) {
+-        desktopFilePath = compareLastStrategy(list);
+-    }
+-    return desktopFilePath;
++    qDebug()<<"ProxyServiceManager ---------------start";
++    m_time = new QTimer(this);
++    connect(m_time, SIGNAL(timeout()), this, SLOT(init()));
++    m_time->start(10);
+ }
+ 
+-void ProxyServiceManager::wirteJsonFile(QString filePath, const QJsonObject obj)
++void ProxyServiceManager::stop()
+ {
+-    if (filePath.isEmpty() || obj.isEmpty()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"function input filePath or obj is error!";
+-        return;
+-    }
+-    QFile file(filePath);
+-    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+-    QJsonDocument writeDoc = QJsonDocument(obj);
+-    file.write(writeDoc.toJson());
+-    qDebug()<<Q_FUNC_INFO<<__LINE__<<filePath<<"write success!";
+-    file.flush();
+-    file.close();
++    qDebug()<<"ProxyServiceManager ---------------stop";
+ }
+ 
+-void ProxyServiceManager::addProcDbus(const qint32 pid)
++void ThreadObject::addProcDbus(const qint32 pid)
+ {
+     if (!m_proxyInterface->isValid()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"m_proxyInterface dbus is not valid!";
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"m_proxyInterface dbus is not valid!";
+         return;
+     }
+ 
+@@ -484,7 +327,7 @@ void ProxyServiceManager::addProcDbus(const qint32 pid)
+ void ProxyServiceManager::startProxyDbus(const QJsonObject obj)
+ {
+     if (obj.isEmpty()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"obj is error!";
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"obj is error!";
+         return;
+     }
+ 
+@@ -495,13 +338,12 @@ void ProxyServiceManager::startProxyDbus(const QJsonObject obj)
+ 
+     QString proto = obj.value(PROTOJSON_KEY_TYPE).toString();
+     m_proxyInterface->call("StartProxy", proto, "default", false);
+-    qDebug()<<Q_FUNC_INFO<<__LINE__<<"StartProxy"<<proto<<"default"<<"false";
+ }
+ 
+ void ProxyServiceManager::addProxyDbus(const QJsonObject obj)
+ {
+     if (obj.isEmpty()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"obj is error!";
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"obj is error!";
+         return;
+     }
+ 
+@@ -516,7 +358,6 @@ void ProxyServiceManager::addProxyDbus(const QJsonObject obj)
+     QString proto = confObj.value(PROTOJSON_KEY_TYPE).toString();
+     QByteArray objArray = QJsonDocument(confObj).toJson();
+     m_proxyInterface->call("AddProxy", proto, "default", objArray);
+-    qDebug()<<Q_FUNC_INFO<<__LINE__<<proto<<"default"<<objArray;
+ }
+ 
+ void ProxyServiceManager::clearProxyDbus()
+@@ -527,7 +368,6 @@ void ProxyServiceManager::clearProxyDbus()
+     }
+ 
+     m_proxyInterface->call("ClearProxy");
+-    qDebug()<<Q_FUNC_INFO<<__LINE__;
+ }
+ 
+ void ProxyServiceManager::startProxy(const QJsonObject obj)
+@@ -535,6 +375,7 @@ void ProxyServiceManager::startProxy(const QJsonObject obj)
+     clearProxyDbus();
+     addProxyDbus(obj);
+     startProxyDbus(obj);
++    m_threadObj->setProxyState(true);
+     setProxyState(true);
+ }
+ 
+@@ -546,7 +387,6 @@ void ProxyServiceManager::stopProxyDbus()
+     }
+ 
+     m_proxyInterface->call("StopProxy");
+-    qDebug()<<Q_FUNC_INFO<<__LINE__;
+ }
+ 
+ void ProxyServiceManager::stopProxy()
+@@ -556,41 +396,10 @@ void ProxyServiceManager::stopProxy()
+     QJsonObject protoObj = readJsonFile(jsonPath);
+     protoObj.insert(PROTOJSON_KEY_STATE, QJsonValue(false));
+     wirteJsonFile(jsonPath, protoObj);
++    m_threadObj->setProxyState(false);
+     setProxyState(false);
+ }
+ 
+-QJsonObject ProxyServiceManager::dealJsonObj(const QStringList configList)
+-{
+-    QJsonObject configObj = QJsonObject();
+-    if (configList.isEmpty() && configList.count() < 3) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"configList item less!";
+-        return configObj;
+-    }
+-
+-    configObj.insert(PROTOJSON_KEY_TYPE, QJsonValue(configList.at(0)));
+-    configObj.insert(PROTOJSON_KEY_NAME, QJsonValue("default"));
+-    configObj.insert(PROTOJSON_KEY_SERVER, QJsonValue(configList.at(1)));
+-    QString prot = configList.at(2);
+-    configObj.insert(PROTOJSON_KEY_PORT, QJsonValue(prot.toInt()));
+-    switch (configList.count()) {
+-    case 4:
+-        configObj.insert(PROTOJSON_KEY_USRNAME, QJsonValue(configList.at(3)));
+-        configObj.insert(PROTOJSON_KEY_PASSWORD, QJsonValue(""));
+-        break;
+-
+-    case 5:
+-        configObj.insert(PROTOJSON_KEY_USRNAME, QJsonValue(configList.at(3)));
+-        configObj.insert(PROTOJSON_KEY_PASSWORD, QJsonValue(configList.at(4)));
+-        break;
+-
+-    default:
+-        configObj.insert(PROTOJSON_KEY_USRNAME, QJsonValue(""));
+-        configObj.insert(PROTOJSON_KEY_PASSWORD, QJsonValue(""));
+-        break;
+-    }
+-    configObj.insert(PROTOJSON_KEY_STATE, QJsonValue(true));
+-    return configObj;
+-}
+ 
+ QStringList ProxyServiceManager::getProxyConfig()
+ {
+@@ -632,28 +441,6 @@ void ProxyServiceManager::delValueFromArray(QJsonArray *array, const QJsonValue
+     }
+ }
+ 
+-QJsonObject ProxyServiceManager::readJsonFile(QString filePath)
+-{
+-    QJsonObject readObj = QJsonObject();
+-    if (filePath.isEmpty() || !QFile(filePath).exists()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<filePath<<"is not exits!";
+-        return readObj;
+-    }
+-
+-    QFile file(filePath);
+-    file.open(QIODevice::ReadOnly);
+-    QByteArray readBy = file.readAll();
+-    file.close();
+-    QJsonParseError error;
+-    QJsonDocument readDoc = QJsonDocument::fromJson(readBy, &error);
+-    if (!readDoc.isEmpty() && error.error == QJsonParseError::NoError) {
+-        readObj = readDoc.object();
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<filePath<<"read success!";
+-    }
+-
+-    return readObj;
+-}
+-
+ void ProxyServiceManager::setProxyFile(QString desktopfp, bool create)
+ {
+     QString jsonPath = QDir::homePath() + "/" + APPPROXY_FILE;
+@@ -674,10 +461,8 @@ void ProxyServiceManager::setProxyFile(QString desktopfp, bool create)
+         QJsonValue arrayItem = QJsonValue(desktopfp);
+         if (create && !appArray.contains(arrayItem)) {
+             appArray.append(arrayItem);
+-            qDebug()<<Q_FUNC_INFO<<__LINE__<<desktopfp<<" add to proxy list";
+         }
+         if (!create && appArray.contains(arrayItem)) {
+-            qDebug()<<Q_FUNC_INFO<<__LINE__<<desktopfp<<" remove from proxy list";
+             delValueFromArray(&appArray, arrayItem);
+         }
+         writeObj.insert(JSON_KEY_APPLICATION, appArray);
+@@ -691,21 +476,31 @@ void ProxyServiceManager::setProxyFile(QString desktopfp, bool create)
+ void ProxyServiceManager::addAppIntoProxy(QString desktopfp)
+ {
+     if (desktopfp.isEmpty()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"desktopfp is Empty!";
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"desktopfp is Empty!";
+         return;
+     }
+ 
+     setProxyFile(desktopfp, true);
++    m_proxyDesktopList = getAppProxyFromFile();
++    getProxyInfoList();
++    m_threadObj->setDesktopList(m_proxyDesktopList);
++    m_threadObj->setExecList(m_proxyExecList);
++    m_threadObj->setNameList(m_proxyNameList);
+ }
+ 
+ void ProxyServiceManager::delAppIntoProxy(QString desktopfp)
+ {
+     if (desktopfp.isEmpty()) {
+-        qDebug()<<Q_FUNC_INFO<<__LINE__<<"desktopfp is Empty!";
++        qWarning()<<Q_FUNC_INFO<<__LINE__<<"desktopfp is Empty!";
+         return;
+     }
+ 
+     setProxyFile(desktopfp, false);
++    m_proxyDesktopList = getAppProxyFromFile();
++    getProxyInfoList();
++    m_threadObj->setDesktopList(m_proxyDesktopList);
++    m_threadObj->setExecList(m_proxyExecList);
++    m_threadObj->setNameList(m_proxyNameList);
+ }
+ 
+ void ProxyServiceManager::setProxyStateDbus(bool state)
+@@ -728,67 +523,45 @@ bool ProxyServiceManager::getProxyStateDbus()
+     return readObj.value(PROTOJSON_KEY_STATE).toBool();
+ }
+ 
+-QStringList ProxyServiceManager::getAppProxyFromFile()
+-{
+-    QStringList appProxyList;
+-    appProxyList.clear();
+-    QString jsonPath = QDir::homePath() + "/" + APPPROXY_FILE;
+-    QJsonObject readObj = readJsonFile(jsonPath);
+-    QJsonArray appArray = readObj.value("application").toArray();
+-    if (!appArray.isEmpty()) {
+-        for (auto appItem : appArray) {
+-            appProxyList.append(appItem.toString());
+-        }
+-    }
+-    return appProxyList;
+-}
+-
+ QMap<QString, QStringList> ProxyServiceManager::getAppProxy()
+ {
+-    QMap<QString, QStringList> appMap = initAppInfoMap();
+-    QStringList appProxyList = getAppProxyFromFile();
+-    if (!appProxyList.isEmpty()) {
+-        for (auto iter = appMap.begin(); iter != appMap.end(); iter ++) {
+-            if (appProxyList.contains(iter.key())) {
+-                QStringList appInfo = iter.value();
+-                appInfo.replace(2, "true");
+-                appMap.insert(iter.key(), appInfo);
+-            }
+-        }
+-    }
++    initAppInfoMapTemp();
++    m_proxyDesktopList = getAppProxyFromFile();
++    getProxyInfoList();
+ 
+-    return appMap;
+-}
+-
+-QMap<QString, QStringList> ProxyServiceManager::initAppInfoMap()
+-{
+-    QStringList desktopfpList = getDesktopFilePath();
+     QStringList customAppList = getCustomizedAppList(CUSTOMAPP_FILE);
+     QMap<QString, QStringList> appPathMap;
+-    appPathMap.clear();
+-    for (auto desktopfp : desktopfpList) {
+-        QString name = getAppName(desktopfp);
++    for (auto desktopfp : m_appInfoMap.keys()) {
++        QMap<QString, QString> map = m_appInfoMap.value(desktopfp);
++        QString name = map.value(APPINFOMAP_KEY_LOCALNAME);
++        QString icon = map.value(APPINFOMAP_KEY_ICON);
+ 
+         //定制软件判断，若文档是空的，则认为没有开定制功能
+-        if (!customAppList.isEmpty() && !customAppList.contains(name)) {
++        if (!customAppList.isEmpty() && !customAppList.contains(desktopfp)) {
+             continue;
+         }
+ 
+         QStringList appInfoList;
+         appInfoList.append(name);
+-        appInfoList.append(getAppIcon(desktopfp));
+-        appInfoList.append("false");
++        appInfoList.append(icon);
++        if (!m_proxyDesktopList.isEmpty() && m_proxyDesktopList.contains(desktopfp)) {
++            appInfoList.append("true");
++        } else {
++            appInfoList.append("false");
++        }
+         appPathMap.insert(desktopfp, appInfoList);
+     }
++
+     return appPathMap;
+ }
+ 
+ //获取定制软件列表
+ QStringList ProxyServiceManager::getCustomizedAppList(QString filePath)
+ {
++    if (!QFile(filePath).exists()) {
++        return QStringList();
++    }
+     QStringList customizedAppList;
+-    customizedAppList.clear();
+-
+     QJsonObject readObj = readJsonFile(filePath);
+     QJsonArray appArray = readObj.value(JSON_KEY_APPLICATION).toArray();
+     for (auto arrayItem : appArray) {
+@@ -825,7 +598,9 @@ QStringList ProxyServiceManager::getDesktopFilePath()
+ 
+                 return m_filePathList;
+             } else if (obj.value("mode").toString() == "blacklist") {
++#ifdef ENABLE_ANDROIDAPP
+                 getAndroidApp();
++#endif
+                 recursiveSearchFile("/usr/share/applications/");
+                 recursiveSearchFile("/var/lib/snapd/desktop/applications/");
+                 recursiveSearchFile("/var/lib/flatpak/exports/share/applications/");
+@@ -837,7 +612,9 @@ QStringList ProxyServiceManager::getDesktopFilePath()
+                     m_filePathList.removeAll(obj.value("path").toString());
+                 }
+             } else {
++#ifdef ENABLE_ANDROIDAPP
+                 getAndroidApp();
++#endif
+                 recursiveSearchFile("/usr/share/applications/");
+                 recursiveSearchFile("/var/lib/snapd/desktop/applications/");
+                 recursiveSearchFile("/var/lib/flatpak/exports/share/applications/");
+@@ -846,7 +623,9 @@ QStringList ProxyServiceManager::getDesktopFilePath()
+ 
+         file.close();
+     } else {
++#ifdef ENABLE_ANDROIDAPP
+         getAndroidApp();
++#endif
+         recursiveSearchFile("/usr/share/applications/");
+         recursiveSearchFile("/var/lib/snapd/desktop/applications/");
+         recursiveSearchFile("/var/lib/flatpak/exports/share/applications/");
+@@ -890,7 +669,6 @@ QStringList ProxyServiceManager::getDesktopFilePath()
+     m_filePathList.removeAll("/usr/share/applications/kylin-io-monitor.desktop");
+     m_filePathList.removeAll("/usr/share/applications/wps-office-uninstall.desktop");
+     m_filePathList.removeAll("/usr/share/applications/wps-office-misc.desktop");
+-//    m_filePathList.removeAll("/usr/share/applications/kylin-installer.desktop");
+     QStringList desktopList;
+ 
+     for (int i = 0; i < m_filePathList.count(); ++i) {
+@@ -905,38 +683,9 @@ QStringList ProxyServiceManager::getDesktopFilePath()
+             desktopList.append(desktopName);
+         }
+     }
+-
+     return m_filePathList;
+ }
+ 
+-QString ProxyServiceManager::getAppName(QString desktopfp)
+-{
+-    GError **error = nullptr;
+-    GKeyFileFlags flags = G_KEY_FILE_NONE;
+-    GKeyFile *keyfile = g_key_file_new();
+-    QByteArray fpbyte = desktopfp.toLocal8Bit();
+-    char *filepath = fpbyte.data();
+-    g_key_file_load_from_file(keyfile, filepath, flags, error);
+-    char *name = g_key_file_get_locale_string(keyfile, "Desktop Entry", "Name", nullptr, nullptr);
+-    QString namestr = QString::fromLocal8Bit(name);
+-    g_key_file_free(keyfile);
+-    return namestr;
+-}
+-
+-//获取应用图标
+-QString ProxyServiceManager::getAppIcon(QString desktopfp)
+-{
+-    GError **error = nullptr;
+-    GKeyFileFlags flags = G_KEY_FILE_NONE;
+-    GKeyFile *keyfile = g_key_file_new();
+-    QByteArray fpbyte = desktopfp.toLocal8Bit();
+-    char *filepath = fpbyte.data();
+-    g_key_file_load_from_file(keyfile, filepath, flags, error);
+-    char *icon = g_key_file_get_locale_string(keyfile, "Desktop Entry", "Icon", nullptr, nullptr);
+-    g_key_file_free(keyfile);
+-    return QString::fromLocal8Bit(icon);
+-}
+-
+ //文件递归查询
+ void ProxyServiceManager::recursiveSearchFile(const QString &_filePath)
+ {
+@@ -1045,6 +794,7 @@ void ProxyServiceManager::recursiveSearchFile(const QString &_filePath)
+     } while (i < list.size());
+ }
+ 
++#ifdef ENABLE_ANDROIDAPP
+ void ProxyServiceManager::getAndroidApp()
+ {
+     m_androidDesktopfnList.clear();
+@@ -1142,3 +892,4 @@ void ProxyServiceManager::getAndroidApp()
+ 
+     g_key_file_free(keyfile);
+ }
++#endif
+diff --git a/plugins/app-proxy-service/proxy-service-manager.h b/plugins/app-proxy-service/proxy-service-manager.h
+index c4b54c0..85be076 100644
+--- a/plugins/app-proxy-service/proxy-service-manager.h
++++ b/plugins/app-proxy-service/proxy-service-manager.h
+@@ -43,7 +43,7 @@
+ #define USR_SHARE_APP_CURRENT   "/usr/share/applications/."
+ #define USR_SHARE_APP_UPER      "/usr/share/applications/.."
+ 
+-#define GET_DESKTOP_EXEC_NAME_MAIN          "cat %s | awk '{if($1~\"Exec=\")if($2~\"\%\"){print $1} else print}' | cut -d '=' -f 2"
++#define DESKTOP_EXEC_KEY "Exec="
+ #define ANDROID_FILE_PATH       "/.local/share/applications/"
+ #define ANDROID_APP_CURRENT     "/.local/share/applications/."
+ #define ANDROID_APP_UPER        "/.local/share/applications/.."
+@@ -56,6 +56,61 @@
+ #define PROTOJSON_KEY_NAME "name"
+ #define PROTOJSON_KEY_STATE "state"
+ 
++#define APPINFOMAP_KEY_NAME "Name"
++#define APPINFOMAP_KEY_LOCALNAME "Localname"
++#define APPINFOMAP_KEY_ICON "Icon"
++#define APPINFOMAP_KEY_EXEC "Exec"
++#define APPINFOMAP_KEY_KEYWORDS "Keywords"
++#define APPINFOMAP_KEY_COMMENT "Comment"
++
++#define PROCINFOKEY_TYPE "type"
++#define PROCINFOKEY_PID "pid"
++#define PROCINFOKEY_CMDLINE "cmdline"
++#define PROCINFOKEY_UID "uid"
++#define PROCINFOKEY_NAME "name"
++#define PROCINFOKEY_STATE "state"
++#define PROCINFOKEY_TGID "tgid"
++#define PROCINFOKEY_DESKTOP "desktop"
++
++class ThreadObject : public QObject
++{
++    Q_OBJECT
++public:
++    explicit ThreadObject(QObject *parent = nullptr);
++
++    void setProxyState(bool state);
++
++    inline void setDesktopList(QStringList list) {
++        m_proxyDesktopList = list;
++    }
++
++    inline void setExecList(QStringList list) {
++        m_proxyExecList = list;
++    }
++
++    inline void setNameList(QStringList list) {
++        m_proxyNameList = list;
++    }
++
++public Q_SLOTS:
++    void startConnect();
++
++private:
++
++    void addProcDbus(const qint32 pid);
++
++private:
++    QDBusInterface  *m_proxyInterface = nullptr;
++    QDBusInterface  *m_procAddServerDbus = nullptr;
++
++    QStringList m_proxyDesktopList;
++    QStringList m_proxyExecList;
++    QStringList m_proxyNameList;
++
++private Q_SLOTS:
++    void onProcAdd(QMap<QString, QString> map);
++};
++
+ class ProxyServiceManager : public QObject
+ {
+     Q_OBJECT
+@@ -68,20 +123,6 @@ public:
+ 
+ private:
+     void initProxyState();
+-    QString searchFromEnviron(KWindowInfo info, QFileInfoList list);
+-    QString searchAndroidApp(KWindowInfo info);
+-    QString compareClassName(QFileInfoList list);
+-    QString getDesktopFileName(QString cmd);
+-    QString compareCmdExec(QFileInfoList list);
+-    QString compareCmdName(QFileInfoList list);
+-    QString compareDesktopClass(QFileInfoList list);
+-    QString containsName(QFileInfoList list);
+-    QString compareLastStrategy(QFileInfoList list);
+-    QString confirmDesktopFile(KWindowInfo info);
+-    QJsonObject dealJsonObj(const QStringList configList);
+-    QJsonObject readJsonFile(QString filePath);
+-    void wirteJsonFile(QString filePath, const QJsonObject obj);
+-    void addProcDbus(const qint32 pid);
+     void startProxyDbus(const QJsonObject obj);
+     void addProxyDbus(const QJsonObject obj);
+     void clearProxyDbus();
+@@ -90,22 +131,14 @@ private:
+     void stopProxy();
+     void delValueFromArray(QJsonArray *array, const QJsonValue item);
+     void setProxyFile(QString desktopfp, bool create);
+-    QMap<QString, QStringList> initAppInfoMap();
+ 
+-    QStringList getAppProxyFromFile();
+     QStringList getDesktopFilePath();
+ 
+-    QString getAppName(QString desktopfp);
+-    QString getAppIcon(QString desktopfp);
+-
+     QStringList getCustomizedAppList(QString filePath);
+     void recursiveSearchFile(const QString &_filePath);
++#ifdef ENABLE_ANDROIDAPP
+     void getAndroidApp();
+-
+-    void datacpy(void *dest,int dstLen, const void *src, int srcLen);
+-    QString getTerminalOutput(const QString & strCmd);
+-    QStringList getProcAllPid(const QString& ppid);
+-    bool getPidByName();
++#endif
+ 
+     inline bool getProxyState() {
+         return m_proxyState;
+@@ -114,17 +147,17 @@ private:
+         m_proxyState = state;
+     }
+ 
++    void initAppInfoMapTemp();
++    QMap<QString, QString> getDesktopFileInfo(QString desktopfp);
++    void getProxyInfoList();
++
+ private:
+     QDBusInterface  *m_proxyInterface = nullptr;
++    QDBusInterface  *m_procAddServerDbus = nullptr;
+ 
+     QStringList m_filePathList;
+     QStringList m_androidDesktopfnList;
+ 
+-    QString m_classClass = nullptr;
+-    QString m_className = nullptr;
+-    QString m_statusName = nullptr;
+-    QString m_cmdLine = nullptr;
+-
+     GError **m_error = nullptr;
+     GKeyFileFlags m_flags = G_KEY_FILE_NONE;
+     GKeyFile *m_keyfile = nullptr;
+@@ -132,6 +165,14 @@ private:
+     bool m_proxyState = false;
+ 
+     QTimer *m_time;
++    QThread *m_thread;
++    ThreadObject *m_threadObj;
++
++    QMap<QString, QMap<QString, QString>> m_appInfoMap;
++
++    QStringList m_proxyDesktopList;
++    QStringList m_proxyExecList;
++    QStringList m_proxyNameList;
+ 
+ public Q_SLOTS:
+     QStringList getProxyConfig();
+@@ -144,9 +185,6 @@ public Q_SLOTS:
+ 
+ private Q_SLOTS:
+     void init();
+-    void onWindowAdded(WId id);
+-
+-Q_SIGNALS:
+ 
+ };
+ 
+diff --git a/plugins/authority/authority.pro b/plugins/authority/authority.pro
+index 580fe9f..e16e33b 100644
+--- a/plugins/authority/authority.pro
++++ b/plugins/authority/authority.pro
+@@ -1,5 +1,5 @@
+ QT -= gui
+-QT += core dbus x11extras
++QT += core dbus x11extras network
+ CONFIG += c++11 console
+ CONFIG -= app_bundle
+ 
+@@ -38,7 +38,8 @@ SOURCES += \
+         authorityservice.cpp \
+         brightnesshelper.cpp \
+         camera-helper.cpp \
+-        main.cpp
++        main.cpp \
++        procaddserver.cpp
+ 
+ 
+ # Default rules for deployment.
+@@ -49,7 +50,8 @@ SOURCES += \
+ HEADERS += \
+     authorityservice.h \
+     brightnesshelper.h \
+-    camera-helper.h
++    camera-helper.h \
++    procaddserver.h
+ 
+ 
+ DISTFILES += \
+diff --git a/plugins/authority/main.cpp b/plugins/authority/main.cpp
+index eb916ee..1f5e21c 100644
+--- a/plugins/authority/main.cpp
++++ b/plugins/authority/main.cpp
+@@ -24,6 +24,7 @@
+ #include "authorityservice.h"
+ #include "brightnesshelper.h"
+ #include "camera-helper.h"
++#include "procaddserver.h"
+ int main(int argc, char *argv[])
+ {
+     QCoreApplication a(argc, argv);
+@@ -39,6 +40,11 @@ int main(int argc, char *argv[])
+         systemBus.registerObject("/camera", new CameraHelper(),
+                                  QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals
+                                  );
++
++        systemBus.registerObject("/procaddserver", new ProcAddServer(),
++                                 QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals
++                                 );
++
+ //T14 机器组件崩溃异常
+ //        systemBus.registerObject("/brightness", new BrightnessHelper(),
+ //                                 QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllSignals
+diff --git a/plugins/authority/procaddserver.cpp b/plugins/authority/procaddserver.cpp
+new file mode 100644
+index 0000000..af04579
+--- /dev/null
++++ b/plugins/authority/procaddserver.cpp
+@@ -0,0 +1,349 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "procaddserver.h"
++#include <QDebug>
++
++const QStringList systemCmdList = {"cat",
++                                "grep",
++                                "/bin/sh",
++                                "sh",
++                                "wc",
++                                "ps",
++                                "dpkg",
++                                "systemctl",
++                                "awk",
++                                "head",
++                                "runc",
++                                "net",
++                                "/usr/bin/bash",
++                                "dpkg-query",
++                                "top",
++                                "gpg",
++                                "/usr/bin/cat",
++                                "/usr/bin/dpkg",
++                                "/usr/bin/gpg",
++                                "/bin/gpgconf",
++                                "cut",
++                                "mkdir",
++                                "lsblk",
++                                "lspci",
++                                "rm",
++                                "cd",
++                                "vim",
++                                "bash",
++                                "/lib/systemd/systemd",
++                                "/usr/bin/ukui-menu",
++                                "ls",
++                                "systemd"
++                              };
++
++/*
++ * connect to netlink
++ * returns netlink socket, or -1 on error
++ */
++bool ProcAddServer::netlinkConnect()
++{
++    struct sockaddr_nl sa_nl;
++
++    m_sockFd = socket(PF_NETLINK, SOCK_DGRAM, NETLINK_CONNECTOR);
++    if (m_sockFd < 0) {
++        perror("socket");
++        return false;
++    }
++
++    sa_nl.nl_family = AF_NETLINK;
++    sa_nl.nl_groups = CN_IDX_PROC;
++    sa_nl.nl_pid = getpid();
++
++    if (bind(m_sockFd, (struct sockaddr *)&sa_nl, sizeof(sa_nl)) < 0) {
++        perror("bind");
++        close(m_sockFd);
++        m_sockFd = -1;
++        return false;
++    }
++
++    return true;
++}
++
++/*
++ * subscribe on proc events (process notifications)
++ */
++bool ProcAddServer::setProcEvListen(int nl_sock, bool enable)
++{
++    struct __attribute__ ((aligned(NLMSG_ALIGNTO))) {
++        struct nlmsghdr nl_hdr;
++        struct __attribute__ ((__packed__)) {
++            struct cn_msg cn_msg;
++            enum proc_cn_mcast_op cn_mcast;
++        };
++    } nlcn_msg;
++
++    memset(&nlcn_msg, 0, sizeof(nlcn_msg));
++    nlcn_msg.nl_hdr.nlmsg_len = sizeof(nlcn_msg);
++    nlcn_msg.nl_hdr.nlmsg_pid = getpid();
++    nlcn_msg.nl_hdr.nlmsg_type = NLMSG_DONE;
++
++    nlcn_msg.cn_msg.id.idx = CN_IDX_PROC;
++    nlcn_msg.cn_msg.id.val = CN_VAL_PROC;
++    nlcn_msg.cn_msg.len = sizeof(enum proc_cn_mcast_op);
++
++    nlcn_msg.cn_mcast = enable ? PROC_CN_MCAST_LISTEN : PROC_CN_MCAST_IGNORE;
++
++    if (send(nl_sock, &nlcn_msg, sizeof(nlcn_msg), 0) < 0) {
++        perror("netlink send");
++        return false;
++    }
++
++    return true;
++}
++
++/*
++ * handle a single process event
++ */
++int ListenThObject::handleProcEv()
++{
++    int rc;
++    struct __attribute__ ((aligned(NLMSG_ALIGNTO))) {
++        struct nlmsghdr nl_hdr;
++        struct __attribute__ ((__packed__)) {
++            struct cn_msg cn_msg;
++            struct proc_event proc_ev;
++        };
++    } nlcn_msg;
++
++    while (!m_exitStat) {
++        rc = recv(m_sockFd, &nlcn_msg, sizeof(nlcn_msg), 0);
++        if (rc == 0) {
++            /* shutdown? */
++            return 0;
++        } else if (rc == -1) {
++            if (errno == EINTR) continue;
++            perror("netlink recv");
++            return -1;
++        }
++        switch (nlcn_msg.proc_ev.what) {
++            case proc_event::PROC_EVENT_FORK:
++                if (nlcn_msg.proc_ev.event_data.fork.parent_pid > 1) {
++                    Q_EMIT this->procAdd(nlcn_msg.proc_ev.event_data.fork.parent_pid);
++                }
++                break;
++
++            case proc_event::PROC_EVENT_EXEC:
++                if (nlcn_msg.proc_ev.event_data.exec.process_pid > 1) {
++                    Q_EMIT this->procAdd(nlcn_msg.proc_ev.event_data.exec.process_pid);
++                }
++                break;
++
++            case proc_event::PROC_EVENT_NONE:
++            case proc_event::PROC_EVENT_UID:
++            case proc_event::PROC_EVENT_GID:
++                break;
++
++            case proc_event::PROC_EVENT_EXIT:
++                break;
++
++            default:
++                break;
++        }
++    }
++    return 0;
++}
++
++ListenThObject::ListenThObject(QObject *parent) : QObject(parent)
++{
++}
++
++void ProcAddServer::startListen(int pid)
++{
++    if (pid <= 1) {
++        return;
++    }
++
++    if (m_usedModelList.isEmpty()) {
++        m_usedModelList.append(pid);
++    } else if (m_usedModelList.contains(pid)) {
++        return;
++    } else {
++        m_usedModelList.append(pid);
++        return;
++    }
++
++    if (m_sockFd < 0) {
++        if (!netlinkConnect()) {
++            qWarning()<<"Init netlink connector Error!";
++            return;
++        } else {
++            if (!setProcEvListen(m_sockFd, true)) {
++                close(m_sockFd);
++                m_sockFd = -1;
++                qWarning()<<"Init netlink connector Error!";
++                return;
++            }
++        }
++    }
++
++    if (m_listenTh != nullptr && m_listenThObj != nullptr) {
++        m_listenThObj->setExitStat(false);
++        return;
++    }
++
++    m_listenTh = new QThread();
++    m_listenThObj = new ListenThObject();
++    m_listenThObj->setSockFd(m_sockFd);
++    m_listenThObj->moveToThread(m_listenTh);
++    connect(m_listenTh, &QThread::finished, m_listenThObj, &ListenThObject::deleteLater);
++    connect(m_listenTh, &QThread::finished, m_listenTh, &QObject::deleteLater);
++    connect(m_listenTh, &QThread::started, m_listenThObj, &ListenThObject::handleProcEv);
++
++    connect(m_listenThObj, &ListenThObject::procAdd, this, [&](int pid) {
++        DealData *dealData = new DealData(pid, this);
++        dealData->setAutoDelete(true);
++        m_queDutyPool->start(dealData);
++    }, Qt::QueuedConnection);
++
++    m_listenTh->start();
++}
++
++void ProcAddServer::stopListen(int pid)
++{
++    if (m_usedModelList.contains(pid)) {
++        m_usedModelList.removeOne(pid);
++    }
++
++    if (!m_usedModelList.isEmpty()) {
++        return;
++    }
++    if (m_listenThObj != nullptr) {
++        m_listenThObj->setExitStat(true);
++    }
++
++    if (m_listenTh != nullptr && m_listenTh->isRunning()) {
++        disconnect(m_listenThObj);
++        m_listenTh->quit();
++        m_listenTh->wait();
++        m_listenTh = nullptr;
++        m_listenThObj = nullptr;
++
++        if (m_sockFd >= 0) {
++            setProcEvListen(m_sockFd, false);
++            close(m_sockFd);
++            m_sockFd = -1;
++        }
++    }
++}
++
++DealData::DealData(int pid, QObject *obj)
++{
++    qRegisterMetaType<MyMap>("MyMap");
++    m_pid = pid;
++    m_obj = obj;
++}
++
++bool DealData::isSystemCmd(QString cmdline)
++{
++    if (cmdline.isEmpty()) {
++        return true;
++    }
++    QStringList fileLine = cmdline.split(" ");
++    QSet<QString> intersection = systemCmdList.toSet().intersect(fileLine.toSet());
++    if (intersection.isEmpty()) {
++        return false;
++    }
++    return true;
++}
++
++void DealData::run()
++{
++    QMap<QString, QString> procInfo;
++    QString procDir = QString("/proc/%1/").arg(m_pid);
++    if (QDir(procDir).exists()) {
++        QString cmdLine = getFileMsg(procDir + "cmdline");
++        if (isSystemCmd(cmdLine)) {
++            return;
++        }
++        QString environ = getFileMsg(procDir + "environ");
++        QString status = getFileMsg(procDir + "status");
++        procInfo.insert(PROCINFOKEY_TYPE, "app");
++        procInfo.insert(PROCINFOKEY_PID, QString::number(m_pid));
++        procInfo.insert(PROCINFOKEY_CMDLINE, cmdLine);
++        procInfo.insert(PROCINFOKEY_DESKTOP, getEnvironMsg(environ));
++        getStatusMsg(status, &procInfo);
++        QMetaObject::invokeMethod(m_obj, "emitSignal", Q_ARG(MyMap, procInfo));
++    }
++}
++
++QString DealData::getFileMsg(QString filePath)
++{
++    QFile file(filePath);
++    if (file.exists() && file.open(QFile::ReadOnly)) {
++        QByteArray fileMsg = file.readAll();
++        //去掉fileMsg中的乱码，用空格替代
++        fileMsg.replace(0, 32);
++        file.close();
++        return fileMsg;
++    }
++    return QString();
++}
++
++QString DealData::getEnvironMsg(QString environ)
++{
++    QStringList msgList = environ.split(" ");
++    for (QString msgStr : msgList) {
++        if (msgStr.startsWith(FILEKEY_DESKTOP)) {
++            return msgStr.split("=").at(1);
++        }
++    }
++    return QString();
++}
++
++void DealData::getStatusMsg(QString fileMsg, QMap<QString, QString> *infoMap)
++{
++    QStringList msgList = fileMsg.split("\n");
++    for (QString msgStr : msgList) {
++        if (msgStr.startsWith(FILEKEY_NAME)) {
++            infoMap->insert(PROCINFOKEY_NAME, msgStr.split("\t").at(1));
++            continue;
++        }
++        if (msgStr.startsWith(FILEKEY_STATE)) {
++            infoMap->insert(PROCINFOKEY_STATE, msgStr.split("\t").at(1));
++            continue;
++        }
++        if (msgStr.startsWith(FILEKEY_TGID)) {
++            infoMap->insert(PROCINFOKEY_TGID, msgStr.split("\t").at(1));
++            continue;
++        }
++        if (msgStr.startsWith(FILEKEY_UID)) {
++            infoMap->insert(PROCINFOKEY_UID, msgStr.split("\t").at(1));
++            break;
++        }
++    }
++}
++
++void ProcAddServer::emitSignal(MyMap procmap)
++{
++    Q_EMIT this->procAdd(procmap);
++}
++
++ProcAddServer::ProcAddServer(QObject *parent) : QObject(parent)
++{
++    qDBusRegisterMetaType<QMap<QString, QString>>();
++    m_queDutyPool = QThreadPool::globalInstance();
++    m_queDutyPool->setMaxThreadCount(THREAD_MAXNUM);
++}
+diff --git a/plugins/authority/procaddserver.h b/plugins/authority/procaddserver.h
+new file mode 100644
+index 0000000..2dad5e2
+--- /dev/null
++++ b/plugins/authority/procaddserver.h
+@@ -0,0 +1,149 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2023 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++
++#ifndef PROCADDSERVER_H
++#define PROCADDSERVER_H
++
++#include <QObject>
++#include <QThread>
++#include <QQueue>
++#include <QDir>
++#include <QMap>
++
++#include <QDBusConnection>
++#include <QDBusInterface>
++#include <QDBusReply>
++#include <QtDBus/QDBusMetaType>
++
++#include <QThreadPool>
++#include <QRunnable>
++#include <QMetaObject>
++
++#include <QTime>
++
++extern "C"
++{
++#include <sys/socket.h>
++#include <linux/netlink.h>
++#include <linux/connector.h>
++#include <linux/cn_proc.h>
++#include <signal.h>
++#include <errno.h>
++#include <stdbool.h>
++#include <unistd.h>
++
++}
++
++#define THREAD_MAXNUM 5
++#define READLINE_MAXSIZE 256
++
++#define PROCINFOKEY_TYPE "type"
++#define PROCINFOKEY_PID "pid"
++#define PROCINFOKEY_CMDLINE "cmdline"
++#define PROCINFOKEY_UID "uid"
++#define PROCINFOKEY_NAME "name"
++#define PROCINFOKEY_STATE "state"
++#define PROCINFOKEY_TGID "tgid"
++#define PROCINFOKEY_DESKTOP "desktop"
++
++#define FILEKEY_DESKTOP "GIO_LAUNCHED_DESKTOP_FILE="
++#define FILEKEY_NAME "Name:"
++#define FILEKEY_STATE "State:"
++#define FILEKEY_TGID "Tgid:"
++#define FILEKEY_UID "Uid:"
++
++typedef QMap<QString, QString> MyMap;
++
++class ListenThObject : public QObject
++{
++    Q_OBJECT
++public:
++    explicit ListenThObject(QObject *parent = nullptr);
++
++    inline void setExitStat(bool stat)
++    {
++        m_exitStat = stat;
++    }
++
++    inline void setSockFd(int sockFd)
++    {
++        m_sockFd = sockFd;
++    }
++
++private:
++    bool m_exitStat = false;
++    int m_sockFd;
++
++public Q_SLOTS:
++    int handleProcEv();
++
++Q_SIGNALS:
++    void procAdd(int pid);
++};
++
++class DealData : public QRunnable
++{
++public:
++    explicit DealData(int pid, QObject *obj);
++    void run() override;
++
++private:
++    QString getFileMsg(QString filePath);
++
++    bool isSystemCmd(QString cmdline);
++    QString getEnvironMsg(QString environ);
++    void getStatusMsg(QString fileMsg, QMap<QString, QString> *infoMap);
++
++private:
++    int m_pid;
++    QObject *m_obj;
++};
++
++class ProcAddServer : public QObject
++{
++    Q_OBJECT
++    Q_CLASSINFO("D-Bus Interface","com.settings.daemon.interface")
++public:
++    explicit ProcAddServer(QObject *parent = nullptr);
++
++private:
++    bool netlinkConnect();
++    bool setProcEvListen(int nl_sock, bool enable);
++
++private Q_SLOTS:
++    void emitSignal(MyMap procmap);
++
++public Q_SLOTS:
++    void startListen(int pid);
++    void stopListen(int pid);
++
++private:
++    int m_sockFd = -1;
++    QThread *m_listenTh = nullptr;
++    ListenThObject *m_listenThObj = nullptr;
++
++    QThreadPool *m_queDutyPool = nullptr;
++
++    QList<int> m_usedModelList;
++Q_SIGNALS:
++    void procAdd(QMap<QString, QString> procinfo);
++};
++
++#endif // PROCADDSERVER_H
+diff --git a/plugins/gamma-manager/gamma-manager-helper.cpp b/plugins/gamma-manager/gamma-manager-helper.cpp
+index 0ac46a9..2f63f6e 100644
+--- a/plugins/gamma-manager/gamma-manager-helper.cpp
++++ b/plugins/gamma-manager/gamma-manager-helper.cpp
+@@ -294,6 +294,11 @@ bool GmHelper::setGammaWithTemp(const uint rtTemp)
+                 USD_LOG(LOG_DEBUG,"skip:%s:%s", outputInfo->name, m_outputList[var].name.toLatin1().data());
+             }
+         }
++        if (!outputInfo->crtc) {
++            ret = true;
++            USD_LOG(LOG_ERR,"crtc size is 0.\n");
++            goto FREEOUTPUT;
++        }
+ 
+         size = XRRGetCrtcGammaSize(QX11Info::display(), outputInfo->crtc);
+         if (!size) {
+diff --git a/plugins/gamma-manager/gamma-manager-thread.cpp b/plugins/gamma-manager/gamma-manager-thread.cpp
+index 29b3ee8..1d343e2 100644
+--- a/plugins/gamma-manager/gamma-manager-thread.cpp
++++ b/plugins/gamma-manager/gamma-manager-thread.cpp
+@@ -146,7 +146,7 @@ void GmWorkThread::run()
+         do{
+              msleep(10);
+              errorTimes++;
+-        } while (!m_pGmHelper->setGammaWithTemp(m_rtTemperature) && errorTimes < 300);
++        } while (!m_pGmHelper->setGammaWithTemp(m_rtTemperature) && errorTimes < 30);
+         m_lastTemperature = m_rtTemperature;
+         runTimes++;
+         USD_LOG(LOG_DEBUG,"cost time:%d rtTemperature:%d:,runtime:%d,",timerStart.msecsTo(QTime::currentTime()), m_rtTemperature, runTimes);
+diff --git a/plugins/kds/kds.pro b/plugins/kds/kds.pro
+index 261825d..36670a9 100644
+--- a/plugins/kds/kds.pro
++++ b/plugins/kds/kds.pro
+@@ -43,13 +43,11 @@ INSTALLS +=  \
+             target \
+ 
+ SOURCES += \
+-    kdswidget.cpp \
+         main.cpp \
+         widget.cpp \
+     expendbutton.cpp
+ 
+ HEADERS += \
+-    kdswidget.h \
+         widget.h \
+     expendbutton.h
+ 
+diff --git a/plugins/kds/kdswidget.cpp b/plugins/kds/kdswidget.cpp
+index 898456f..617f44d 100644
+--- a/plugins/kds/kdswidget.cpp
++++ b/plugins/kds/kdswidget.cpp
+@@ -64,7 +64,9 @@ KDSWidget::KDSWidget(QWidget *parent) :
+ KDSWidget::~KDSWidget()
+ {
+     delete ui;
+-    delete btnsGroup;
++
++    //交给父类自动进行析构，这里进行释放会有段错误
++   // delete btnsGroup; 
+ }
+ 
+ void KDSWidget::beginSetupKF5(){
+diff --git a/plugins/kds/kdswidget.h b/plugins/kds/kdswidget.h
+deleted file mode 100644
+index 3d16be0..0000000
+--- a/plugins/kds/kdswidget.h
++++ /dev/null
+@@ -1,98 +0,0 @@
+-/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
+- * -*- coding: utf-8 -*-
+- *
+- * Copyright (C) 2020 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef KDSWIDGET_H
+-#define KDSWIDGET_H
+-
+-#include <QWidget>
+-#include <QButtonGroup>
+-
+-#include <KF5/KScreen/kscreen/output.h>
+-#include <KF5/KScreen/kscreen/edid.h>
+-#include <KF5/KScreen/kscreen/mode.h>
+-#include <KF5/KScreen/kscreen/config.h>
+-#include <KF5/KScreen/kscreen/getconfigoperation.h>
+-#include <KF5/KScreen/kscreen/setconfigoperation.h>
+-
+-namespace Ui {
+-class KDSWidget;
+-}
+-
+-class KDSWidget : public QWidget
+-{
+-    Q_OBJECT
+-
+-public:
+-    explicit KDSWidget(QWidget *parent = nullptr);
+-    ~KDSWidget();
+-
+-    void beginSetupKF5();
+-
+-    QPoint getWinPos();
+-    QString getCurrentPrimaryScreenName();
+-    int getCurrentScale();
+-
+-    void setupComponent();
+-    void setupConnect();
+-
+-    int getCurrentStatus();
+-
+-    void setCurrentUIStatus(int id);
+-    void setCurrentFirstOutputTip();
+-
+-    void syncPrimaryScreenData(QString pName);
+-
+-public:
+-    void setConfig(const KScreen::ConfigPtr &config);
+-    KScreen::ConfigPtr currentConfig() const;
+-
+-    void setCloneModeSetup();
+-    void setExtendModeSetup();
+-    void setFirstModeSetup();
+-    void setOtherModeSetup();
+-    void setLeftExtendModeSetup();
+-
+-private:
+-    QString findFirstOutput();
+-    QSize findBestCloneSize();
+-    bool turnonSpecifiedOutput(const KScreen::OutputPtr &output, int x, int y);
+-
+-    int turnonAndGetRightmostOffset(const KScreen::OutputPtr &output, int x);
+-
+-private:
+-    Ui::KDSWidget *ui;
+-    QButtonGroup * btnsGroup;
+-
+-private:
+-    KScreen::ConfigPtr mConfig = nullptr;
+-
+-public Q_SLOTS:
+-    void msgReceiveAnotherOne(const QString &msg);
+-    void nextSelectedOption();
+-    void lastSelectedOption();
+-    void confirmCurrentOption();
+-    void receiveButtonClick(int x, int y);
+-    void closeApp();
+-
+-Q_SIGNALS:
+-    void tellBtnClicked(int id);
+-
+-};
+-
+-#endif // KDSWIDGET_H
+diff --git a/plugins/kds/main.cpp b/plugins/kds/main.cpp
+index b4c2754..750f8fc 100644
+--- a/plugins/kds/main.cpp
++++ b/plugins/kds/main.cpp
+@@ -18,7 +18,6 @@
+  *
+  */
+ #include "widget.h"
+-#include "kdswidget.h"
+ #include <QApplication>
+ #include "qtsingleapplication.h"
+ 
+@@ -49,26 +48,12 @@ int main(int argc, char *argv[])
+     qtTranslator.load(QString(":/%1").arg(QLocale::system().name()));
+     app.installTranslator(&qtTranslator);
+ 
+-    KDSWidget kdsw;
+     Widget w;
+-
+-    QString sessionType = qgetenv("XDG_SESSION_TYPE");
+-    if (QString::compare(sessionType, "wayland") == 0){
+-        kdsw.beginSetupKF5();
+-        //    QObject::connect(&app, SIGNAL(messageReceived(const QString&, NULL)), &w, SLOT(msgReceiveAnotherOne(QString)));
+-        QObject::connect(&app, &QtSingleApplication::messageReceived, &kdsw, &KDSWidget::msgReceiveAnotherOne);
+-        kdsw.show();
+-
+-    } else {
+-        w.beginSetup();
+-        //    QObject::connect(&app, SIGNAL(messageReceived(const QString&, NULL)), &w, SLOT(msgReceiveAnotherOne(QString)));
+-        QObject::connect(&app, &QtSingleApplication::messageReceived, &w, &Widget::msgReceiveAnotherOne);
+-        QObject::connect(&app, &QtSingleApplication::screenAdded, &w, &Widget::geometryChangedHandle);
+-        QObject::connect(&app, &QtSingleApplication::screenRemoved, &w, &Widget::geometryChangedHandle);
+-
+-        w.show();
+-    }
+-
++    w.beginSetup();
++    QObject::connect(&app, &QtSingleApplication::messageReceived, &w, &Widget::msgReceiveAnotherOne);
++    QObject::connect(&app, &QtSingleApplication::screenAdded, &w, &Widget::geometryChangedHandle);
++    QObject::connect(&app, &QtSingleApplication::screenRemoved, &w, &Widget::geometryChangedHandle);
++    w.show();
+     return app.exec();
+ 
+ }
+diff --git a/plugins/kds/widget.cpp b/plugins/kds/widget.cpp
+index 3fd9555..c6fecca 100644
+--- a/plugins/kds/widget.cpp
++++ b/plugins/kds/widget.cpp
+@@ -37,7 +37,6 @@
+ 
+ #include "expendbutton.h"
+ #include "qtsingleapplication.h"
+-#include "xeventmonitor.h"
+ #include "clib-syslog.h"
+ 
+ #define TITLEHEIGHT 90
+@@ -111,24 +110,19 @@ void Widget::beginSetup()
+     connect(QApplication::primaryScreen(), &QScreen::geometryChanged, this, &Widget::geometryChangedHandle);
+ 
+     //connect(XEventMonitor::instance(), SIGNAL(buttonPress(int,int)),this, SLOT(XkbButtonEvent(int,int)));
++    
+     connect(KWindowSystem::self(), &KWindowSystem::activeWindowChanged, this,[&](WId activeWindowId) {
+-        if (activeWindowId != this->winId()) {
++        if (activeWindowId != 0 && activeWindowId != this->winId()) {
+             close();
+         }
+     });
++
+     //XEventMonitor::instance()->start();
+ }
+ 
+ void Widget::initData()
+ {
+     btnsGroup = new QButtonGroup;
+-
+-//    gtk_init(NULL, NULL);
+-
+-    //Monitor init
+-//    kScreen = mate_rr_screen_new (gdk_screen_get_default (), NULL);
+-    //kConfig = mate_rr_config_new_current (kScreen, NULL);
+-
+ }
+ 
+ void Widget::setupComponent()
+@@ -518,11 +512,6 @@ void Widget::keyPressEvent(QKeyEvent* event)
+     }
+ }
+ 
+-void Widget::XkbButtonEvent(int x,int y)
+-{
+-    receiveButtonClick( x/m_scale, y/m_scale);
+-}
+-
+ void Widget::showEvent(QShowEvent* event)
+ {
+     if(m_styleSettings->get("style-name").toString() == "ukui-light")
+diff --git a/plugins/kds/widget.h b/plugins/kds/widget.h
+index 11ac343..ffb7baf 100644
+--- a/plugins/kds/widget.h
++++ b/plugins/kds/widget.h
+@@ -71,11 +71,7 @@ private:
+     QButtonGroup *btnsGroup;
+     QMetaEnum metaEnum;
+ private:
+-    MateRRScreen * kScreen;
+-//    MateRRConfig * kConfig;
+-
+     bool           m_superPresss;
+-
+     QGSettings     *m_scaleSetting;
+     QGSettings     *m_styleSettings;
+ 
+@@ -90,7 +86,6 @@ protected:
+     void showEvent(QShowEvent* event);
+ 
+ public Q_SLOTS:
+-    void XkbButtonEvent(int,int);
+     void msgReceiveAnotherOne(const QString &msg);
+     void geometryChangedHandle();
+     void screensParamChangedSignal(QString screensParam);
+diff --git a/plugins/keybindings/keybindings-manager.cpp b/plugins/keybindings/keybindings-manager.cpp
+index 58ed313..b5703f7 100644
+--- a/plugins/keybindings/keybindings-manager.cpp
++++ b/plugins/keybindings/keybindings-manager.cpp
+@@ -36,7 +36,8 @@ KeybindingsManager *KeybindingsManager::mKeybinding = nullptr;
+ 
+ KeybindingsManager::KeybindingsManager()
+ {
+-
++    m_pStartTimer = new QTimer(this);
++    connect(m_pStartTimer, SIGNAL(timeout()), this, SLOT(doStartTimerOut()));
+ }
+ 
+ KeybindingsManager::~KeybindingsManager()
+@@ -133,6 +134,8 @@ bool KeybindingsManager::bindings_get_entry (KeybindingsManager *manager,const c
+                                     settings_path,
+                                     compare_bindings);
+ 
++    USD_LOG(LOG_DEBUG, "action:%s,key:%s",action, key);
++
+     if (!tmp_elem) {
+         new_binding = g_new0 (Binding, 1);
+     } else {
+@@ -152,8 +155,10 @@ bool KeybindingsManager::bindings_get_entry (KeybindingsManager *manager,const c
+     new_binding->settings_path = g_strdup (settings_path);
+ 
+     if (parse_binding (new_binding)) {
+-        if (!tmp_elem)
++        if (!tmp_elem) {
+             manager->binding_list = g_slist_prepend (manager->binding_list, new_binding);
++            USD_LOG(LOG_DEBUG, "had add in list");
++        }
+     } else {
+         g_free (new_binding->binding_str);
+         g_free (new_binding->action);
+@@ -200,13 +205,14 @@ void KeybindingsManager::bindings_get_entries (KeybindingsManager *manager)
+ 
+     bindings_clear(manager);
+     custom_list = dconf_util_list_subdirs (GSETTINGS_KEYBINDINGS_DIR, FALSE);
+-
++    USD_LOG_SHOW_PARAM1(custom_list);
+     if (custom_list != NULL)
+     {
+         for (i = 0; custom_list[i] != NULL; i++)
+         {
+             gchar *settings_path;
+             settings_path = g_strdup_printf("%s%s", GSETTINGS_KEYBINDINGS_DIR, custom_list[i]);
++            USD_LOG(LOG_DEBUG,"ready bindings:%s", settings_path);
+             bindings_get_entry (manager,settings_path);
+             g_free (settings_path);
+         }
+@@ -321,7 +327,6 @@ void KeybindingsManager::binding_register_keys (KeybindingsManager *manager)
+     bool need_flush = false;
+     gdk_x11_display_error_trap_push (gdk_display_get_default());
+     /* Now check for changes and grab new key if not already used
+-     * 现在检查更改并获取新密钥（如果尚未使用）
+      */
+     for (li = manager->binding_list; li != NULL; li = li->next) {
+         Binding *binding = (Binding *) li->data;
+@@ -333,8 +338,10 @@ void KeybindingsManager::binding_register_keys (KeybindingsManager *manager)
+                 need_flush = true;
+                 if (binding->previous_key.keycodes) {
+                         grab_key_unsafe (&binding->previous_key, FALSE, manager->screens);
++                         USD_LOG(LOG_DEBUG,"grab key[%d] action[%s] over!",binding->key, binding->action);
+                 }
+                 grab_key_unsafe (&binding->key, TRUE, manager->screens);
++                USD_LOG(LOG_DEBUG,"grab key[%d] action[%s] over!",binding->key, binding->action);
+                 binding->previous_key.keysym = binding->key.keysym;
+                 binding->previous_key.state = binding->key.state;
+                 g_free (binding->previous_key.keycodes);
+@@ -480,9 +487,10 @@ void KeybindingsManager::get_screens_list (void)
+     screens->append(screen);
+ }
+ 
+-bool KeybindingsManager::KeybindingsManagerStart()
++void KeybindingsManager::doStartTimerOut()
+ {
+     USD_LOG(LOG_DEBUG,"-- Keybindings Manager Start --");
++
+     QList<GdkScreen*>::iterator l, begin, end;
+     GdkDisplay  *dpy;
+     GdkScreen   *screen;
+@@ -493,7 +501,7 @@ bool KeybindingsManager::KeybindingsManagerStart()
+ 
+     gdk_init(NULL,NULL);
+     dpy = gdk_display_get_default ();
+-
++     m_pStartTimer->stop();
+ //    xdpy = GDK_DISPLAY_XDISPLAY (dpy);
+     xdpy = QX11Info::display();
+ 
+@@ -574,6 +582,11 @@ bool KeybindingsManager::KeybindingsManagerStart()
+         }
+ #endif
+     }
++}
++
++bool KeybindingsManager::KeybindingsManagerStart()
++{
++    m_pStartTimer->start(5000);
+     return true;
+ }
+ 
+diff --git a/plugins/keybindings/keybindings-manager.h b/plugins/keybindings/keybindings-manager.h
+index d895c38..97f2397 100644
+--- a/plugins/keybindings/keybindings-manager.h
++++ b/plugins/keybindings/keybindings-manager.h
+@@ -73,6 +73,9 @@ public:
+     void KeybindingsManagerStop();
+     void get_screens_list();
+ 
++public Q_SLOTS:
++    void doStartTimerOut();
++
+ public:
+     static void bindings_callback (DConfClient  *client,
+                                    gchar        *prefix,
+@@ -99,6 +102,7 @@ private:
+ 
+     QGSettings *dconfSet;
+     GMainLoop *loop;
++    QTimer *m_pStartTimer;
+ };
+ 
+ #endif // KEYBINDINGSMANAGER_H
+diff --git a/plugins/media-keys/acme.h b/plugins/media-keys/acme.h
+index 1c547bd..dacb447 100644
+--- a/plugins/media-keys/acme.h
++++ b/plugins/media-keys/acme.h
+@@ -82,6 +82,7 @@ enum {
+     TOUCHPAD_OFF_KEY,
+     RFKILL_KEY,
+     BLUETOOTH_KEY,
++    PERFORMANCE_KEY,
+ };
+ 
+ static struct {
+@@ -89,7 +90,7 @@ static struct {
+         const char *settings_key;
+         const char *hard_coded;
+         Key *key;
+-} keys[HANDLED_KEYS] = {
++} keys[PERFORMANCE_KEY+1] = {
+ };
+ 
+ #endif /* __ACME_H__ */
+diff --git a/plugins/media-keys/mediakey-manager.cpp b/plugins/media-keys/mediakey-manager.cpp
+index 80492a6..11bd560 100644
+--- a/plugins/media-keys/mediakey-manager.cpp
++++ b/plugins/media-keys/mediakey-manager.cpp
+@@ -77,7 +77,7 @@ MediaKeysManager::MediaKeysManager(QObject* parent):QObject(parent)
+     mVolumeWindow = new VolumeWindow();
+     mDeviceWindow = new DeviceWindow();
+     mpulseAudioManager = new PulseAudioManager(this);
+-    powerSettings = new QGSettings(POWER_SCHEMA);
++    m_pPowerSettings = new QGSettings(POWER_SCHEMA);
+     mSettings = new QGSettings(MEDIAKEY_SCHEMA);
+     if(QGSettings::isSchemaInstalled(QByteArray(MEDIAKEY_STATE_SCHEMA))){
+         m_settingsKeyState = new QGSettings(MEDIAKEY_STATE_SCHEMA);
+@@ -150,9 +150,9 @@ MediaKeysManager::~MediaKeysManager()
+         delete mDeviceWindow;
+         mDeviceWindow = nullptr;
+     }
+-    if (powerSettings) {
+-        delete powerSettings;
+-        powerSettings = nullptr;
++    if (m_pPowerSettings) {
++        delete m_pPowerSettings;
++        m_pPowerSettings = nullptr;
+     }
+ 
+ }
+@@ -313,6 +313,51 @@ void MediaKeysManager::getConfigMonitor()
+     });
+ }
+ 
++void MediaKeysManager::doChangePerformanceMode()
++{
++    int powerMode;
++    QString svgName;
++    if (!UsdBaseClass::powerModeControlByHardware(powerMode)) {
++        powerMode = m_pPowerSettings->get("power-policy-battery").toInt();
++        QDBusInterface upowerInterface("org.freedesktop.UPower",
++                                       "/org/freedesktop/UPower",
++                                       "org.freedesktop.UPower",
++                                       QDBusConnection::systemBus());
++
++        if (upowerInterface.isValid()) {
++            QString policyKey;
++            bool result = upowerInterface.property("OnBattery").toBool();
++            if (result == UsdBaseClass::BatteryState::Connected) {  //connected
++                policyKey = "power-policy-battery";
++            } else {
++                policyKey = "power-policy-ac";
++            }
++
++            powerMode = m_pPowerSettings->get(policyKey).toInt();
++            powerMode = powerMode >= UsdBaseClass::PowerMode::EcoMode ? UsdBaseClass::PowerMode::PerformanceMode : powerMode + 1;
++            m_pPowerSettings->set(policyKey, powerMode);
++        } else{
++            USD_LOG(LOG_DEBUG,"can't get battery state so that we can't changed the power mode");
++            return;
++        }
++    }
++
++    switch (powerMode) {
++    case UsdBaseClass::PowerMode::PerformanceMode:
++        svgName = "ukui-performance-symbolic";
++        break;
++    case UsdBaseClass::PowerMode::AutoMode:
++        svgName = "ukui-auto-symbolic";
++        break;
++    case UsdBaseClass::PowerMode::EcoMode:
++        svgName = "ukui-eco-symbolic";
++        break;
++    }
++
++    mDeviceWindow->setAction(svgName);
++    mDeviceWindow->dialogShow();
++}
++
+ 
+ void MediaKeysManager::initShortcuts()
+ {
+@@ -1083,7 +1128,7 @@ void MediaKeysManager::MMhandleRecordEvent(xEvent* data)
+             xEventHandle(CALCULATOR_KEY, event);
+ 
+         } else if (eventKeysym == XKB_KEY_XF86Battery) {
+-
++            xEventHandle(PERFORMANCE_KEY, event);
+ 
+         } else if (eventKeysym == XKB_KEY_XF86Bluetooth) {
+             xEventHandle(BLUETOOTH_KEY, event);
+@@ -1157,9 +1202,9 @@ void MediaKeysManager::MMhandleRecordEventRelease(xEvent* data)
+             xEventHandleRelease(CALCULATOR_KEY);
+ 
+         } else if (eventKeysym == XKB_KEY_XF86Battery) {
++             xEventHandleRelease(PERFORMANCE_KEY);
+ 
+-
+-        } else if (eventKeysym == XKB_KEY_XF86Battery) {
++        } else if (eventKeysym == XKB_KEY_XF86Bluetooth) {
+             xEventHandleRelease(BLUETOOTH_KEY);
+ 
+         }
+@@ -1581,6 +1626,8 @@ bool MediaKeysManager::doAction(int type)
+     case BLUETOOTH_KEY:
+         doBluetoothAction();
+         break;
++    case PERFORMANCE_KEY:
++        doChangePerformanceMode();
+     default:
+         break;
+     }
+@@ -1707,24 +1754,27 @@ void MediaKeysManager::updateKbdCallback(const QString &key)
+ void MediaKeysManager::doTouchpadAction(int state)
+ {
+     QGSettings *touchpadSettings;
+-    bool touchpadState;
++    int touchpadState;
+ 
+-    touchpadSettings = new QGSettings("org.ukui.peripherals-touchpad");
+-    touchpadState = touchpadSettings->get("touchpad-enabled").toBool();
+-
+-    if (STATE_TOGGLE == state) {
+-        mDeviceWindow->setAction(!touchpadState ? "ukui-touchpad-on-symbolic" : "ukui-touchpad-off-symbolic");
+-        touchpadSettings->set("touchpad-enabled",!touchpadState);
+-    } else if (STATE_ON == state) {
+-        mDeviceWindow->setAction("ukui-touchpad-on-symbolic");
+-        touchpadSettings->set("touchpad-enabled",STATE_ON);
+-    } else if (STATE_OFF == state) {
+-        mDeviceWindow->setAction("ukui-touchpad-off-symbolic");
+-        touchpadSettings->set("touchpad-enabled",STATE_OFF);
++    if (UsdBaseClass::touchpadControlByHardware(touchpadState)) {
++            mDeviceWindow->setAction(touchpadState ? "ukui-touchpad-on-symbolic" : "ukui-touchpad-off-symbolic");
++    } else {
++        touchpadSettings = new QGSettings("org.ukui.peripherals-touchpad");
++        touchpadState = touchpadSettings->get("touchpad-enabled").toBool();
++
++        if (STATE_TOGGLE == state) {
++            mDeviceWindow->setAction(!touchpadState ? "ukui-touchpad-on-symbolic" : "ukui-touchpad-off-symbolic");
++            touchpadSettings->set("touchpad-enabled",!touchpadState);
++        } else if (STATE_ON == state) {
++            mDeviceWindow->setAction("ukui-touchpad-on-symbolic");
++            touchpadSettings->set("touchpad-enabled",STATE_ON);
++        } else if (STATE_OFF == state) {
++            mDeviceWindow->setAction("ukui-touchpad-off-symbolic");
++            touchpadSettings->set("touchpad-enabled",STATE_OFF);
++        }
++        delete touchpadSettings;
+     }
+     mDeviceWindow->dialogShow();
+-
+-    delete touchpadSettings;
+ }
+ 
+ QString getEdidHash(int outputId)
+@@ -1742,19 +1792,26 @@ QString getEdidHash(int outputId)
+ 
+ void MediaKeysManager::doBrightAction(int type)
+ {
++
+     mXEventMonitor->setBrightnessEnable(false);
+     if(m_canSetBrightnessByPower) {
+         int brightValue;
++        int brightStep;
++
++        if (!UsdBaseClass::brightnessControlByHardware(brightStep)) {
++            brightStep = STEP_BRIGHTNESS;
++        }
++
+         QGSettings* settings = new QGSettings(GPM_SETTINGS_SCHEMA);
+         switch (type){
+         case BRIGHT_UP_KEY:
+-            brightValue = settings->get(GPM_SETTINGS_BRIGHTNESS_AC).toInt() + STEP_BRIGHTNESS;
++            brightValue = settings->get(GPM_SETTINGS_BRIGHTNESS_AC).toInt() + brightStep;
+             if(brightValue >= MAX_PROGRESSBAR){
+                 brightValue = MAX_PROGRESSBAR;
+             }
+             break;
+         case BRIGHT_DOWN_KEY:
+-            brightValue = settings->get(GPM_SETTINGS_BRIGHTNESS_AC).toInt() - STEP_BRIGHTNESS;
++            brightValue = settings->get(GPM_SETTINGS_BRIGHTNESS_AC).toInt() - brightStep;
+             if(brightValue <= MIN_PROGRESSBAR){
+                 brightValue = MIN_PROGRESSBAR;
+             }
+@@ -2010,7 +2067,7 @@ void MediaKeysManager::doPowerOffAction()
+         }
+         startTime = QTime::currentTime();
+         QStringList arguments;
+-        power_state = powerSettings->getEnum(POWER_BUTTON_KEY);
++        power_state = m_pPowerSettings->getEnum(POWER_BUTTON_KEY);
+         switch (power_state) {
+         case POWER_HIBERNATE:
+             arguments << "--hibernate";
+@@ -2251,12 +2308,20 @@ void MediaKeysManager::doWlanAction()
+ void MediaKeysManager::doFlightModeAction()
+ {
+     int flightState = RfkillSwitch::instance()->getCurrentFlightMode();
+-
++    int hardwareState;
+     if(flightState == -1) {
+         USD_LOG(LOG_ERR,"get flight mode error");
+         return;
+     }
+ 
++    if (!UsdBaseClass::flightModeControlByHardware(hardwareState)) {
++        flightState = !flightState;
++        RfkillSwitch::instance()->toggleFlightMode(flightState);
++        USD_LOG(LOG_DEBUG, "flight mode control by OS-->%d", flightState);
++    } else {
++        USD_LOG(LOG_DEBUG, "flight mode control by hardware-->%d", flightState);
++    }
++
+     mDeviceWindow->setAction(flightState ? "ukui-airplane-mode-on-symbolic" : "ukui-airplane-mode-off-symbolic");
+     mDeviceWindow->dialogShow();
+     if(m_settingsKeyState->keys().contains(RFKILL_STATE)){
+@@ -2379,8 +2444,8 @@ void MediaKeysManager::mediaKeyForOtherApp(int action,QString appName)
+ {
+     Q_UNUSED(action);
+     Q_UNUSED(appName);
+-//    USD_LOG(LOG_DEBUG,"action:%d appName:%s",action, appName.toLatin1().data());
+-//    doAction(action);
++    USD_LOG(LOG_DEBUG,"action:%d appName:%s",action, appName.toLatin1().data());
++    doAction(action);
+ }
+ /**
+  * @brief MediaKeysManager::ReleaseMediaPlayerKeys
+diff --git a/plugins/media-keys/mediakey-manager.h b/plugins/media-keys/mediakey-manager.h
+index 6f0d227..c060223 100644
+--- a/plugins/media-keys/mediakey-manager.h
++++ b/plugins/media-keys/mediakey-manager.h
+@@ -111,6 +111,7 @@ private:
+     void initShortcuts();
+     void getConfigMonitor();
+     /******************Functional class function(功能类函数)****************/
++    void doChangePerformanceMode();
+     void doTouchpadAction(int);
+     void doSoundAction(int);
+     void doSoundActionALSA(int);
+@@ -205,7 +206,7 @@ private:
+     QGSettings        *pointSettings;
+     QGSettings        *sessionSettings;
+     QGSettings        *shotSettings;
+-    QGSettings        *powerSettings;
++    QGSettings        *m_pPowerSettings;
+ 
+     QProcess          *mExecCmd;
+     GdkScreen         *mCurrentScreen;  //current GdkScreen
+@@ -242,9 +243,7 @@ private:
+     xEventHandleHadRelase(WINDOWSWITCH_KEY);
+     xEventHandleHadRelase(CALCULATOR_KEY);
+     xEventHandleHadRelase(BLUETOOTH_KEY);
+-
+-
+-
++    xEventHandleHadRelase(PERFORMANCE_KEY);
+ };
+ 
+ #endif // MEDIAKEYSMANAGER_H
+diff --git a/plugins/media-keys/pulseaudiomanager.cpp b/plugins/media-keys/pulseaudiomanager.cpp
+index 4f92c53..ed4a8c1 100644
+--- a/plugins/media-keys/pulseaudiomanager.cpp
++++ b/plugins/media-keys/pulseaudiomanager.cpp
+@@ -21,7 +21,7 @@
+ #include <QDebug>
+ #include <QMutexLocker>
+ 
+-#define VOLMUE_NORMAL 100.0f
++#define VOLMUE_NORMAL 100.00f
+ 
+ #define MIN_VOLUME PA_VOLUME_NORM/500
+ 
+@@ -31,59 +31,56 @@ PulseAudioManager::PulseAudioManager(QObject *parent) : QObject(parent)
+ 
+ PulseAudioManager::~PulseAudioManager()
+ {
+-    if(m_paMainloopApi){
++    if (m_paMainloopApi) {
+         m_paMainloopApi->quit(m_paMainloopApi, 0);
+         m_paMainloopApi = nullptr;
+     }
+-    if(m_paContext){
++    if (m_paContext) {
+         pa_context_set_state_callback(m_paContext, nullptr, nullptr);
+         pa_context_disconnect(m_paContext);
+         pa_context_unref(m_paContext);
+         m_paContext = nullptr;
+     }
+-    if(m_paThreadMainLoop){
++    if (m_paThreadMainLoop) {
+         pa_threaded_mainloop_stop(m_paThreadMainLoop);
+         pa_threaded_mainloop_free(m_paThreadMainLoop);
+         m_paThreadMainLoop = nullptr;
+     }
+-}
+-
+-void PulseAudioManager::serverInfoCallback(pa_context *c, const pa_server_info *i, void *data)
+-{
+-    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
+-    if(c && i) {
+-        USD_LOG(LOG_DEBUG, "server info sink : %s  , source :%s", i->default_sink_name, i->default_source_name);
+-        pa->m_defaultSinkName = QString::fromLatin1(i->default_sink_name);
+-        pa->m_defaultSourceName = QString::fromLatin1(i->default_source_name);
+-        pa_context_get_sink_info_by_name(c, pa->m_defaultSinkName.toLatin1().data(), sinkInfoCallback, data);
+-        pa_context_get_source_info_by_name(c, pa->m_defaultSourceName.toLatin1().data(), sourceInfoCallback, data);
+-    }
++    m_sinkList.clear();
++    m_sourceList.clear();
+ }
+ 
+ void PulseAudioManager::subscribeCallback(pa_context *c, pa_subscription_event_type_t type, uint32_t idx, void *data)
+ {
+     PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
+-    pa_operation *o;
++    int event = (type & PA_SUBSCRIPTION_EVENT_TYPE_MASK);
+     switch (type & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) {
+     case PA_SUBSCRIPTION_EVENT_SINK:
+-        if (!(o = pa_context_get_sink_info_by_index(c, idx, &PulseAudioManager::sinkInfoCallback, data))) {
+-            break;
++        if (event == PA_SUBSCRIPTION_EVENT_CHANGE
++                || event == PA_SUBSCRIPTION_EVENT_NEW) {
++            pa_operation *o = pa_context_get_sink_info_by_index(pa->m_paContext, idx, &PulseAudioManager::sinkInfoCallback, data);
++            pa_operation_unref(o);
++        } else if (event == PA_SUBSCRIPTION_EVENT_REMOVE) {
++            QMutexLocker locker(&pa->m_mutex);
++            pa->m_sinkList.remove(idx);
+         }
+-        pa_operation_unref(o);
+         break;
+     case PA_SUBSCRIPTION_EVENT_SOURCE:
+-        if (!(o = pa_context_get_source_info_by_index(c, idx, &PulseAudioManager::sourceInfoCallback, data))) {
+-            break;
++        if (event == PA_SUBSCRIPTION_EVENT_CHANGE
++                || event == PA_SUBSCRIPTION_EVENT_NEW) {
++            pa_operation *o = pa_context_get_source_info_by_index(pa->m_paContext, idx, &PulseAudioManager::sourceInfoCallback, data);
++            pa_operation_unref(o);
++        } else if (event == PA_SUBSCRIPTION_EVENT_REMOVE) {
++            QMutexLocker locker(&pa->m_mutex);
++            pa->m_sourceList.remove(idx);
+         }
+-        pa_operation_unref(o);
+         break;
+     case PA_SUBSCRIPTION_EVENT_SERVER:
+-        if (!(o = pa_context_get_server_info(pa->m_paContext, &PulseAudioManager::serverInfoCallback, data))) {
+-            USD_LOG(LOG_WARNING,"pa_operation : get server info failed");
+-            break;
+-        }
++    {
++        pa_operation *o = pa_context_get_server_info(pa->m_paContext, &PulseAudioManager::serverInfoCallback, data);
+         pa_operation_unref(o);
+         break;
++    }
+     default:
+         break;
+     }
+@@ -97,24 +94,19 @@ void PulseAudioManager::contextStateCallback(pa_context *c, void *data)
+     switch (state) {
+     case PA_CONTEXT_READY:
+     {
+-        pa_operation *o;
+-        o = pa_context_subscribe(pa->m_paContext,
+-                                (pa_subscription_mask_t)
+-                                (PA_SUBSCRIPTION_MASK_SINK |
+-                                 PA_SUBSCRIPTION_MASK_SOURCE |
+-                                 PA_SUBSCRIPTION_MASK_SERVER),
+-                                 &PulseAudioManager::sucessCallback, data);
+-        pa_operation_unref(o);
+-
+-        o = pa_context_get_server_info(pa->m_paContext, serverInfoCallback, data);
++        pa_operation *o = pa_context_subscribe(pa->m_paContext,
++                                              (pa_subscription_mask_t)
++                                              (PA_SUBSCRIPTION_MASK_SINK |
++                                               PA_SUBSCRIPTION_MASK_SOURCE |
++                                               PA_SUBSCRIPTION_MASK_SERVER),
++                                               &PulseAudioManager::sucessCallback, data);
+         pa_operation_unref(o);
++        pa->initPulseDevice();
+         break;
+     }
+     case PA_CONTEXT_FAILED:
+-        USD_LOG(LOG_WARNING, "PA_CONTEXT_FAILED");
+-        break;
+     case PA_CONTEXT_TERMINATED:
+-        USD_LOG(LOG_WARNING, "PA_CONTEXT_TERMINATED");
++        USD_LOG(LOG_WARNING, "PA_CONTEXT_FAILED || PA_CONTEXT_TERMINATED");
+         break;
+     default:
+         break;
+@@ -129,13 +121,14 @@ void PulseAudioManager::sucessCallback(pa_context *c, int success, void *data)
+ 
+ void PulseAudioManager::connectPulseContext()
+ {
+-    if(!(m_paThreadMainLoop = pa_threaded_mainloop_new())){
++    if (!(m_paThreadMainLoop = pa_threaded_mainloop_new())) {
+         USD_LOG(LOG_WARNING,"new m_paThreadMainLoop failed");
+         return;
+     }
+ 
+     m_paMainloopApi = pa_threaded_mainloop_get_api(m_paThreadMainLoop);
+-    if(!m_paMainloopApi){
++    if (!m_paMainloopApi) {
++        pa_threaded_mainloop_free(m_paThreadMainLoop);
+         USD_LOG(LOG_WARNING,"get m_paMainloopApi failed");
+         return;
+     }
+@@ -151,18 +144,26 @@ void PulseAudioManager::connectPulseContext()
+     pa_context_set_state_callback(m_paContext, &PulseAudioManager::contextStateCallback, this);
+     pa_context_set_subscribe_callback(m_paContext, &PulseAudioManager::subscribeCallback, this);
+ 
+-    if(pa_context_connect(m_paContext, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0){
+-        qDebug()<<"pa_context_connect";
++    if (pa_context_connect(m_paContext, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0) {
++        pa_context_unref(m_paContext);
++        pa_threaded_mainloop_free(m_paThreadMainLoop);
+         USD_LOG(LOG_WARNING,"connect pa_context failed");
+     }
+ 
+-    if(pa_threaded_mainloop_start(m_paThreadMainLoop) < 0){
++    if (pa_threaded_mainloop_start(m_paThreadMainLoop) < 0) {
++        pa_context_unref(m_paContext);
++        pa_threaded_mainloop_free(m_paThreadMainLoop);
+         USD_LOG(LOG_WARNING,"pa_threaded_mainloop_start failed");
+     }
+-
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+ 
++void PulseAudioManager::serverInfoCallback(pa_context *c, const pa_server_info *i, void *data)
++{
++    PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
++    pa->updateDefault(i);
++}
++
+ void PulseAudioManager::sinkInfoCallback(pa_context *c, const pa_sink_info *si, int eol, void *data)
+ {
+     PulseAudioManager* pa = reinterpret_cast<PulseAudioManager*>(data);
+@@ -179,34 +180,70 @@ void PulseAudioManager::sourceInfoCallback(pa_context *c, const pa_source_info *
+     }
+ }
+ 
+-void PulseAudioManager::updateSinkInfo(const pa_sink_info* si)
++void PulseAudioManager::updateSinkInfo(const pa_sink_info* i)
+ {
+     QMutexLocker locker(&m_mutex);
+-    if (m_defaultSinkName == QString::fromLatin1(si->name)) {
+-        if(m_realSinkVolume != pa_cvolume_max(&(si->volume))){
+-            m_realSinkVolume = pa_cvolume_max(&(si->volume));
+-            m_sinkVolume = volForPulseVol(pa_cvolume_max(&(si->volume)));
+-            Q_EMIT sinkVolumeChanged(m_sinkVolume);
+-        }
+-        if(m_sinkMute != si->mute){
+-            m_sinkMute = si->mute;
+-            Q_EMIT sinkMuteChanged(m_sinkMute);
+-        }
+-        USD_LOG(LOG_DEBUG, "update sink info volume is %d", m_sinkVolume);
+-        m_sinkChannels = si->volume.channels;
+-        m_channelMap = si->channel_map;
+-        m_balance = pa_cvolume_get_balance(&si->volume,&si->channel_map);
++    PaObjectPtr sink;
++    if (m_sinkList.count(i->index)) {
++        sink = m_sinkList.value(i->index);
+     } else {
+-        USD_LOG(LOG_DEBUG,"we don't care beacuse sink name is not default");
++        sink = PaObjectPtr(new PaObject);
++        m_sinkList[i->index] = sink;
+     }
++    sink->description = QString::fromLatin1(i->description);
++    sink->name = QString::fromLatin1(i->name);
++    sink->channels = i->channel_map.channels;
++    sink->mute = i->mute;
++    sink->volume = pa_cvolume_max(&i->volume);
++    sink->index = i->index;
++    sink->channelMap = i->channel_map;
++    sink->balance = pa_cvolume_get_balance(&i->volume, &i->channel_map) * 100.0;
++    if (sink->isDefault) {
++        Q_EMIT sinkVolumeChanged(volForPulseVol(sink->volume));
++        Q_EMIT sinkMuteChanged(sink->mute);
++    }
++}
++
++void PulseAudioManager::updateSourceInfo(const pa_source_info* i)
++{
++    QMutexLocker locker(&m_mutex);
++    PaObjectPtr source;
++    if (m_sourceList.count(i->index)) {
++        source = m_sourceList.value(i->index);
++    } else {
++        source = PaObjectPtr(new PaObject);
++        m_sourceList[i->index] = source;
++    }
++    source->description = QString::fromLatin1(i->description);
++    source->name = QString::fromLatin1(i->name);
++    source->channels = i->channel_map.channels;
++    source->mute = i->mute;
++    source->volume = pa_cvolume_max(&i->volume);
++    source->index = i->index;
++    source->channelMap = i->channel_map;
++    source->balance = pa_cvolume_get_balance(&i->volume, &i->channel_map);
+ }
+ 
+-void PulseAudioManager::updateSourceInfo(const pa_source_info* so)
++void PulseAudioManager::updateDefault(const pa_server_info *i)
+ {
+     QMutexLocker locker(&m_mutex);
+-    if (m_defaultSourceName == QString::fromLatin1(so->name)) {
+-        if(m_sourceMute != so->mute){
+-            m_sourceMute = so->mute;
++    Q_FOREACH (auto& sink, m_sinkList) {
++        if (sink->name == QString::fromLatin1(i->default_sink_name)) {
++            sink->isDefault = true;
++            m_sinkIndex = sink->index;
++            Q_EMIT sinkVolumeChanged(volForPulseVol(sink->volume));
++            Q_EMIT sinkMuteChanged(sink->mute);
++        } else {
++            sink->isDefault = false;
++        }
++    }
++
++    Q_FOREACH (auto& source, m_sourceList) {
++        if (source->name == QString::fromLatin1(i->default_source_name)) {
++            source->isDefault = true;
++            m_sourceIndex = source->index;
++        } else {
++            source->isDefault = false;
+         }
+     }
+ }
+@@ -216,32 +253,41 @@ uint32_t PulseAudioManager::volToPulseVol(int value)
+     return value == 0 ? MIN_VOLUME : value / VOLMUE_NORMAL * PA_VOLUME_NORM;
+ }
+ 
+-uint32_t PulseAudioManager::volForPulseVol(int value)
++uint32_t PulseAudioManager::volForPulseVol(uint32_t value)
+ {
+-    return qRound(value * VOLMUE_NORMAL / PA_VOLUME_NORM) ;
++    return qRound(value * VOLMUE_NORMAL / PA_VOLUME_NORM);
+ }
+ 
+-void PulseAudioManager::setSinkVolume(int value)
++void PulseAudioManager::initPulseDevice()
+ {
++    pa_operation* o;
++    //get sink info list
++    o = pa_context_get_sink_info_list(m_paContext, &PulseAudioManager::sinkInfoCallback, this);
++    pa_operation_unref(o);
+ 
+-    if(m_sinkVolume == value){
+-        return;
++    //get source info list
++    o = pa_context_get_source_info_list(m_paContext, &PulseAudioManager::sourceInfoCallback, this);
++    pa_operation_unref(o);
++
++    //get server info
++    o = pa_context_get_server_info(m_paContext, serverInfoCallback, this);
++    pa_operation_unref(o);
++
++}
++
++void PulseAudioManager::setSinkVolume(int value)
++{
++    if (getSinkMute()) {
++        setSinkMute(false);
+     }
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
++    pa_cvolume volume;
++    pa_cvolume_init(&volume);
++    pa_cvolume_set(&volume, m_sinkList.value(m_sinkIndex)->channels, volToPulseVol(value));
++    pa_cvolume_set_balance(&volume, &m_sinkList.value(m_sinkIndex)->channelMap, m_sinkList.value(m_sinkIndex)->balance / 100.0);
++
+     pa_operation* o;
+-    pa_cvolume volmue;
+-    volmue.channels = m_sinkChannels;
+-    pa_volume_t paValue = volToPulseVol(value);
+-    for(int i = 0; i < m_sinkChannels ; ++i){
+-        volmue.values[i] = paValue;
+-    }
+-    if(m_balance != 0) {
+-        pa_cvolume_set_balance(&volmue, &m_channelMap, m_balance);
+-    }
+-    if(!(o = pa_context_set_sink_volume_by_name(m_paContext, m_defaultSinkName.toLatin1().data(), &volmue, nullptr, nullptr))) {
+-        USD_LOG(LOG_WARNING,"pa_operation : set sink volume failed");
+-        return;
+-    }
++    o = pa_context_set_sink_volume_by_index(m_paContext, m_sinkIndex, &volume, nullptr, nullptr);
+     pa_operation_unref(o);
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ 
+@@ -251,10 +297,7 @@ void PulseAudioManager::setSinkMute(bool mute)
+ {
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
+     pa_operation* o;
+-    if(!(o = pa_context_set_sink_mute_by_name(m_paContext, m_defaultSinkName.toLatin1().data(), mute, nullptr, nullptr))) {
+-        USD_LOG(LOG_WARNING,"pa_operation : set sink mute failed");
+-        return;
+-    }
++    o = pa_context_set_sink_mute_by_index(m_paContext, m_sinkIndex, mute, nullptr, nullptr);
+     pa_operation_unref(o);
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+@@ -262,14 +305,27 @@ void PulseAudioManager::setSinkMute(bool mute)
+ void PulseAudioManager::setSourceMute(bool mute)
+ {
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
+-
+     pa_operation* o;
+-    if(!(o = pa_context_set_source_mute_by_name(m_paContext, m_defaultSourceName.toLatin1().data(), mute, nullptr, nullptr))) {
+-        USD_LOG(LOG_WARNING,"pa_operation : set source mute failed");
+-        return;
+-    }
++    o = pa_context_set_source_mute_by_index(m_paContext, m_sourceIndex, mute, nullptr, nullptr);
+     pa_operation_unref(o);
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
++}
+ 
++uint PulseAudioManager::getSinkVolume()
++{
++    QMutexLocker locker(&m_mutex);
++    return volForPulseVol(m_sinkList.value(m_sinkIndex)->volume);
++}
++
++bool PulseAudioManager::getSinkMute()
++{
++    QMutexLocker locker(&m_mutex);
++    return m_sinkList.value(m_sinkIndex)->mute;
++}
++
++bool PulseAudioManager::getSourceMute()
++{
++    QMutexLocker locker(&m_mutex);
++    return m_sourceList.value(m_sourceIndex)->mute;
+ }
+ 
+diff --git a/plugins/media-keys/pulseaudiomanager.h b/plugins/media-keys/pulseaudiomanager.h
+index 538fc85..821f4cd 100644
+--- a/plugins/media-keys/pulseaudiomanager.h
++++ b/plugins/media-keys/pulseaudiomanager.h
+@@ -26,11 +26,28 @@
+ #include <pulse/pulseaudio.h>
+ #include <pulse/simple.h>
+ #include <QMutex>
++#include <QSharedPointer>
++#include <QMap>
+ 
+ extern "C" {
+     #include "clib-syslog.h"
+ }
+ 
++struct PaObject
++{
++    QString name;
++    QString description;
++    bool isDefault = false;
++    bool mute;
++    uint32_t index;
++    uint channels;
++    int balance;
++    pa_volume_t volume;
++    pa_channel_map channelMap;
++};
++
++typedef QSharedPointer<PaObject> PaObjectPtr;
++
+ class PulseAudioManager : public QObject
+ {
+     Q_OBJECT
+@@ -41,28 +58,26 @@ public:
+     ~PulseAudioManager();
+ 
+ public:
+-    void updateSinkInfo(const pa_sink_info* si);
+-    void updateSourceInfo(const pa_source_info* so);
++    void updateSinkInfo(const pa_sink_info* i);
++    void updateSourceInfo(const pa_source_info* o);
++    void updateDefault(const pa_server_info* i);
+     void setSinkVolume(int value);
+     void setSinkMute(bool muted);
+     void setSourceMute(bool mute);
+-    int getSinkVolume(){return m_sinkVolume;}
+-    bool getSinkMute(){return m_sinkMute;}
+-    bool getSourceMute(){return m_sourceMute;}
+-
+-    QString getSinkName(){return m_defaultSinkName;}
+-    QString getSourceName(){return m_defaultSinkName;}
+-
++    uint getSinkVolume();
++    bool getSinkMute();
++    bool getSourceMute();
+     void connectPulseContext();     //链接pulse 上下文
+ private:
+     inline uint32_t volToPulseVol(int value);
+-    inline uint32_t volForPulseVol(int value);
+-
++    inline uint32_t volForPulseVol(uint32_t value);
++private:
++    void initPulseDevice();
+ 
+ protected:
+ 
+     static void sinkInfoCallback(pa_context *c, const pa_sink_info *i, int eol, void *data);
+-    static void sourceInfoCallback(pa_context *c, const pa_source_info *so, int eol, void *data);
++    static void sourceInfoCallback(pa_context *c, const pa_source_info *i, int eol, void *data);
+     static void serverInfoCallback(pa_context *c, const pa_server_info *i, void *data);
+ 
+     static void subscribeCallback(pa_context *c, pa_subscription_event_type_t type, uint32_t idx, void *data);
+@@ -73,19 +88,13 @@ private:
+     pa_context *m_paContext;
+     pa_mainloop_api *m_paMainloopApi;
+ 
+-    uint8_t m_sinkChannels;
+-    pa_channel_map m_channelMap;
+-    bool m_sinkMute;            //输出设备静音
+-    int m_sinkVolume;           //输出音量值
+-    int m_realSinkVolume;       //pulseaudio 内的音量值 131~65536
+-    bool m_sourceMute;          //输入设备静音
+-
++    uint32_t m_sinkIndex;
++    uint32_t m_sourceIndex;
++    QMap<uint32_t, PaObjectPtr> m_sinkList;
++    QMap<uint32_t, PaObjectPtr> m_sourceList;
++    QMutex m_mutex;
+     QString m_defaultSinkName;
+     QString m_defaultSourceName;
+-
+-    float m_balance = 0.0f;
+-    QMutex m_mutex;
+-
+ Q_SIGNALS:
+     void sinkVolumeChanged(int);
+     void sinkMuteChanged(bool);
+diff --git a/plugins/save-param/calibrate-touch-device.cpp b/plugins/save-param/calibrate-touch-device.cpp
+index b67b0fd..8e8f7cb 100644
+--- a/plugins/save-param/calibrate-touch-device.cpp
++++ b/plugins/save-param/calibrate-touch-device.cpp
+@@ -47,13 +47,17 @@ void CalibrateTouchDevice::calibration()
+ {
+     QString configPath = QString("/var/lib/lightdm-data/%1/usd/config/%2").arg(m_userName).arg(QString::fromLatin1(MAP_CONFIG));
+     TouchCalibrate* calibrate = new TouchCalibrate(configPath);
++
++    //上游直接去了延时重连，但是可能是欠缺考虑了greeter某用户设置了旋转但触摸设备会断连的情况
++    //这里没设备就不进行多于的映射了
++    if(!calibrate->hasTouchDevice()) {
++        calibrate->deleteLater();
++        Q_EMIT calibrateFinished();
++	return;
++    }
++    
+     calibrate->calibrate();
+     calibrate->deleteLater();
+-    //防止设备丢失，无法映射，目前无法接入设备注册信号，暂做3s 延时重新映射处理
+-    QTimer::singleShot(3000, [=]{
+-        TouchCalibrate* delayCalibrate = new TouchCalibrate(configPath);
+-        delayCalibrate->calibrate();
+-        delayCalibrate->deleteLater();
+-        Q_EMIT calibrateFinished();
+-    });
++    Q_EMIT calibrateFinished();
++
+ }
+diff --git a/plugins/save-param/save-screen.cpp b/plugins/save-param/save-screen.cpp
+index 61c3822..4ea10c4 100644
+--- a/plugins/save-param/save-screen.cpp
++++ b/plugins/save-param/save-screen.cpp
+@@ -491,12 +491,14 @@ void SaveScreenParam::readKscreenConfigAndSetItWithX(QString kscreenConfigName)
+             setWithoutConfig(&m_kscreenConfigParam);
+             SYS_LOG(LOG_DEBUG,"can't open %s's screen config>%s",m_userName.toLatin1().data(),configFullPath.toLatin1().data());
+         } else {
+-            if (m_kscreenConfigParam.m_outputList.count() == 1) {//lenovo LT1953wF 显示器
++            if (m_kscreenConfigParam.m_outputList.count() == 1) {//lenovo LT1953wF 显示器最大分辨率1440x900。是否这类都这样？？
++                QSize size = getMaxSize();
++                USD_LOG(LOG_DEBUG,".");
+                 width = m_kscreenConfigParam.m_outputList[0]->property("width").toInt();
+                 height = m_kscreenConfigParam.m_outputList[0]->property("height").toInt();
+                 QString name = m_kscreenConfigParam.m_outputList[0]->property("name").toString();
+                 USD_LOG(LOG_DEBUG,"name%s:%dx%d",name.toLatin1().data(), width, height);
+-                if (width == 1280 && height == 1024) {
++                if (width == 1280 && height == 1024 && size.width() == 1440 && size.height() == 900) {
+                     cmd = QString("xrandr --output %1 --auto").arg(name);
+ //                    QString("xrandr --output %1 --mode 1280x1024").arg(name);
+                     QProcess proc;
+@@ -652,6 +654,31 @@ OutputsConfig SaveScreenParam::readOutputConfig()
+     return m_kscreenConfigParam;
+ }
+ 
++QSize SaveScreenParam::getMaxSize()
++{
++    QSize size;
++    for (int koutput = 0; koutput < m_pScreenRes->noutput; koutput++) {
++        XRROutputInfo *outputInfo = XRRGetOutputInfo (m_pDpy, m_pScreenRes, m_pScreenRes->outputs[koutput]);
++        if (outputInfo->connection != RR_Connected) {
++            XRRFreeOutputInfo(outputInfo);
++            continue;
++        }
++        USD_LOG(LOG_DEBUG,"%s->npreferred:%d",outputInfo->name, outputInfo->npreferred);
++        for (int kresMode = 0; kresMode < m_pScreenRes->nmode; kresMode++) {
++            XRRModeInfo *resMode = &m_pScreenRes->modes[kresMode];
++            USD_LOG(LOG_DEBUG,"%dx%d",resMode->width, resMode->height);
++            if (resMode->id == outputInfo->modes[0]) {
++                size.setWidth(resMode->width);
++                size.setHeight(resMode->height);
++                USD_LOG(LOG_DEBUG,"%dx%d",resMode->width, resMode->height);
++                break;
++            }
++        }
++        XRRFreeOutputInfo(outputInfo);
++    }
++    return size;
++}
++
+ 
+ void SaveScreenParam::getRootWindows()
+ {
+diff --git a/plugins/save-param/save-screen.h b/plugins/save-param/save-screen.h
+index 4d94e65..3c64ae3 100644
+--- a/plugins/save-param/save-screen.h
++++ b/plugins/save-param/save-screen.h
+@@ -105,6 +105,7 @@ public:
+ 
+     OutputsConfig readOutputConfig();
+ 
++    QSize getMaxSize();
+ Q_SIGNALS:
+     void applyFinish();
+     void getConfigFinished();
+diff --git a/plugins/xrdb/xrdb-manager.cpp b/plugins/xrdb/xrdb-manager.cpp
+index 46df928..01a68fe 100644
+--- a/plugins/xrdb/xrdb-manager.cpp
++++ b/plugins/xrdb/xrdb-manager.cpp
+@@ -42,20 +42,23 @@ ukuiXrdbManager::ukuiXrdbManager():
+     settings = new QGSettings(SCHEMAS);
+     if(QGSettings::isSchemaInstalled(UKUI_STYLE_SCHEMAS)) {
+         styleSettings = new QGSettings(UKUI_STYLE_SCHEMAS);
++        if (styleSettings->keys().contains(STYLE_THEME_NAME)) {
++            updateTheme(STYLE_THEME_NAME);
++        }
++        if (styleSettings->keys().contains(WIDGET_THEME_NAME)) {
++            updateTheme(WIDGET_THEME_NAME);
++        }
+     }
+     if(QGSettings::isSchemaInstalled(XSETTINGS_PLUGIN_SCHEMA)) {
+         m_scaleSettings = new QGSettings(XSETTINGS_PLUGIN_SCHEMA);
++        if (m_scaleSettings->keys().contains(SCALING_FACTOR_KEY)) {
++            updateTheme(SCALING_FACTOR_KEY);
++        }
+     } else {
+         USD_LOG(LOG_WARNING, "org.ukui.SettingsDaemon.plugins.xsettings is not installed.");
+     }
+     allUsefulAdFiles = new QList<QString>();
+ 
+-    QString filename = QDir::homePath() + QStringLiteral("/.config/ukui-decorationrc");
+-    QSettings *themeSettings = new QSettings(filename, QSettings::IniFormat);
+-    m_theme = qvariant_cast<KylinTheme>(themeSettings->value(QStringLiteral("ThemeMode/theme")));
+-    m_themeMode = qvariant_cast<KylinThemeMode>(themeSettings->value(QStringLiteral("ThemeMode/mode")));
+-    themeSettings->deleteLater();
+-    gtk_init(NULL,NULL);
+ }
+ 
+ ukuiXrdbManager::~ukuiXrdbManager()
+@@ -64,6 +67,14 @@ ukuiXrdbManager::~ukuiXrdbManager()
+         delete settings;
+         settings = nullptr;
+     }
++    if (styleSettings) {
++        styleSettings->deleteLater();
++        styleSettings = nullptr;
++    }
++    if (m_scaleSettings) {
++        m_scaleSettings->deleteLater();
++        m_scaleSettings = nullptr;
++    }
+     if (allUsefulAdFiles) {
+         allUsefulAdFiles->clear();
+         delete allUsefulAdFiles;
+@@ -416,20 +427,11 @@ void ukuiXrdbManager::applySettings(){
+     allUsefulAdFiles->clear();
+ }
+ 
+-/** func : private slots for gsettings key 'gtk-theme' changed
+- *         监听 'gtk-theme' key值变化的槽函数
+- */
+-void ukuiXrdbManager::themeChanged(const QString& key)
++bool ukuiXrdbManager::updateTheme(const QString &theme)
+ {
+-    QDBusMessage fontMsg = QDBusMessage::createSignal(QStringLiteral("/UKUIPlatformTheme"),
+-                                                     QStringLiteral("org.ukui.UKUIPlatformTheme"),
+-                                                     QStringLiteral("refreshFonts"));
+-    fontMsg.setArguments({key});
+-    QDBusConnection::sessionBus().send(fontMsg);
+-
+     /* 监听主题更改，发送dbus信号 */
+-    if(key == QStringLiteral("style-name")){
+-        QString style = styleSettings->get(key).toString();
++    if(theme == QStringLiteral(STYLE_THEME_NAME)){
++        QString style = styleSettings->get(theme).toString();
+         if (m_whiteThemeNameList.contains(style)) {
+             m_themeMode = Light;
+         } else if (m_blackThemeNameList.contains(style)) {
+@@ -437,8 +439,8 @@ void ukuiXrdbManager::themeChanged(const QString& key)
+         } else if (style == QStringLiteral("ukui-default")) {
+             m_themeMode = Default;
+         }
+-    } else if (key == QStringLiteral("widget-theme-name")) {
+-        QString value = styleSettings->get(key).toString();
++    } else if (theme == QStringLiteral(WIDGET_THEME_NAME)) {
++        QString value = styleSettings->get(theme).toString();
+         if (value == QStringLiteral("default")) {
+             m_theme = ThemeDefault;
+         } else if (value == QStringLiteral("fashion")) {
+@@ -446,17 +448,34 @@ void ukuiXrdbManager::themeChanged(const QString& key)
+         } else if (value == QStringLiteral("classical")) {
+             m_theme = ThemeClassical;
+         }
+-    } else if (key == QLatin1String(SCALING_FACTOR_KEY)) {
++    } else if (theme == QLatin1String(SCALING_FACTOR_KEY)) {
+         m_scale = m_scaleSettings->get(QLatin1String(SCALING_FACTOR_KEY)).toDouble();
+     } else {
+-        return;
++        return false;
++    }
++    return true;
++}
++
++
++/** func : private slots for gsettings key 'gtk-theme' changed
++ *         监听 'gtk-theme' key值变化的槽函数
++ */
++void ukuiXrdbManager::themeChanged(const QString& key)
++{
++    qDebug() << "style name change is " << key;
++    QDBusMessage fontMsg = QDBusMessage::createSignal(QStringLiteral("/UKUIPlatformTheme"),
++                                                     QStringLiteral("org.ukui.UKUIPlatformTheme"),
++                                                     QStringLiteral("refreshFonts"));
++    fontMsg.setArguments({key});
++    QDBusConnection::sessionBus().send(fontMsg);
++    if (updateTheme(key)) {
++        saveThemeConfig();
++        QDBusMessage themeMsg = QDBusMessage::createSignal("/KGlobalSettings",
++                                   "org.kde.KGlobalSettings",
++                                   "slotThemeChange");
++        themeMsg << m_themeMode;
++        QDBusConnection::sessionBus().send(themeMsg);
+     }
+-    saveThemeConfig();
+-    QDBusMessage themeMsg = QDBusMessage::createSignal("/KGlobalSettings",
+-                               "org.kde.KGlobalSettings",
+-                               "slotThemeChange");
+-    themeMsg << m_themeMode;
+-    QDBusConnection::sessionBus().send(themeMsg);
+ //    getColorConfigFromGtkWindow();
+     //applySettings();
+ }
+@@ -575,7 +594,6 @@ void ukuiXrdbManager::saveThemeConfig ()
+     themeSettings->deleteLater();
+ }
+ 
+-
+ /* func : remove one item from first,if second have this item too.
+  *        the point is : name is same.
+  * example: first.at(3) == "/etc/xrdb/tmp1.ad"
+diff --git a/plugins/xrdb/xrdb-manager.h b/plugins/xrdb/xrdb-manager.h
+index aa40698..df47e18 100644
+--- a/plugins/xrdb/xrdb-manager.h
++++ b/plugins/xrdb/xrdb-manager.h
+@@ -49,7 +49,8 @@ extern "C"{
+ #define SYSTEM_THEME_DIR "/usr/share/themes/"
+ 
+ #define UKUI_STYLE_SCHEMAS "org.ukui.style"
+-#define UKUI_THEME         "widget-theme-name"
++#define STYLE_THEME_NAME   "style-name"
++#define WIDGET_THEME_NAME  "widget-theme-name"
+ 
+ #define XSETTINGS_PLUGIN_SCHEMA "org.ukui.SettingsDaemon.plugins.xsettings"
+ #define SCALING_FACTOR_KEY      "scaling-factor"
+@@ -99,8 +100,10 @@ private:
+ 
+     void saveThemeConfig (); //保存kWinp配置
+ 
++    bool updateTheme(const QString& theme);
++
+ private Q_SLOTS:
+-    void themeChanged (const QString& key);
++    void themeChanged(const QString& key);
+ 
+ private:
+     static ukuiXrdbManager* mXrdbManager;

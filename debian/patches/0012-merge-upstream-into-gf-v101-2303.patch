@@ -1,0 +1,259 @@
+From: weijiongchao <weijiongchao@kylinos.cn>
+Date: Wed, 12 Jul 2023 13:29:18 +0800
+Subject: merge upstream into gf/v101-2303
+
+---
+ plugins/media-keys/mediakey-manager.cpp  |  5 +--
+ plugins/media-keys/pulseaudiomanager.cpp | 77 +++++++++++++++++---------------
+ plugins/media-keys/pulseaudiomanager.h   | 28 +++++++++---
+ 3 files changed, 65 insertions(+), 45 deletions(-)
+
+diff --git a/plugins/media-keys/mediakey-manager.cpp b/plugins/media-keys/mediakey-manager.cpp
+index 11bd560..c50b038 100644
+--- a/plugins/media-keys/mediakey-manager.cpp
++++ b/plugins/media-keys/mediakey-manager.cpp
+@@ -1225,8 +1225,8 @@ void MediaKeysManager::initXeventMonitor()
+ 
+ void MediaKeysManager::initPuseAudioManager()
+ {
+-    connect(mpulseAudioManager, &PulseAudioManager::sinkVolumeChanged, this, &MediaKeysManager::sinkVolumeSlot, Qt::AutoConnection);
+-    connect(mpulseAudioManager, &PulseAudioManager::sinkMuteChanged, this, &MediaKeysManager::sinkMuteSlot, Qt::AutoConnection);
++    connect(mpulseAudioManager, &PulseAudioManager::sinkVolumeChanged, this, &MediaKeysManager::sinkVolumeSlot, Qt::DirectConnection);
++    connect(mpulseAudioManager, &PulseAudioManager::sinkMuteChanged, this, &MediaKeysManager::sinkMuteSlot, Qt::DirectConnection);
+     mpulseAudioManager->connectPulseContext();
+ }
+ 
+@@ -1878,7 +1878,6 @@ void MediaKeysManager::doSoundActionALSA(int keyType)
+     int volume  = mpulseAudioManager->getSinkVolume();
+     bool mute = mpulseAudioManager->getSinkMute();
+     int maxVolume = mVolumeWindow->getVolumeMax();
+-    USD_LOG(LOG_DEBUG,"mpulseAudioManager->getSinkVolume() : %d" , volume);
+     switch(keyType){
+     case MUTE_KEY:
+             mute = !mute;
+diff --git a/plugins/media-keys/pulseaudiomanager.cpp b/plugins/media-keys/pulseaudiomanager.cpp
+index ed4a8c1..c00811e 100644
+--- a/plugins/media-keys/pulseaudiomanager.cpp
++++ b/plugins/media-keys/pulseaudiomanager.cpp
+@@ -121,39 +121,44 @@ void PulseAudioManager::sucessCallback(pa_context *c, int success, void *data)
+ 
+ void PulseAudioManager::connectPulseContext()
+ {
+-    if (!(m_paThreadMainLoop = pa_threaded_mainloop_new())) {
++    m_paThreadMainLoop = pa_threaded_mainloop_new();
++    if (!m_paThreadMainLoop) {
+         USD_LOG(LOG_WARNING,"new m_paThreadMainLoop failed");
+         return;
+     }
+ 
+     m_paMainloopApi = pa_threaded_mainloop_get_api(m_paThreadMainLoop);
+-    if (!m_paMainloopApi) {
+-        pa_threaded_mainloop_free(m_paThreadMainLoop);
+-        USD_LOG(LOG_WARNING,"get m_paMainloopApi failed");
+-        return;
+-    }
+-
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
+-
+     pa_proplist* plist = pa_proplist_new();
+     pa_proplist_sets(plist, PA_PROP_APPLICATION_ID, "ukui-settings-daemon");
+     pa_proplist_sets(plist, PA_PROP_APPLICATION_NAME, "ukui-settings-daemon");
+     m_paContext = pa_context_new_with_proplist(m_paMainloopApi, nullptr, plist);
+     pa_proplist_free(plist);
++    if (!m_paContext) {
++        pa_threaded_mainloop_unlock(m_paThreadMainLoop);
++        pa_threaded_mainloop_free(m_paThreadMainLoop);
++        USD_LOG(LOG_WARNING,"unable to create pa_context .");
++        return;
++    }
+ 
+     pa_context_set_state_callback(m_paContext, &PulseAudioManager::contextStateCallback, this);
+     pa_context_set_subscribe_callback(m_paContext, &PulseAudioManager::subscribeCallback, this);
+ 
+     if (pa_context_connect(m_paContext, nullptr, PA_CONTEXT_NOFLAGS, nullptr) < 0) {
+         pa_context_unref(m_paContext);
++        pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+         pa_threaded_mainloop_free(m_paThreadMainLoop);
+         USD_LOG(LOG_WARNING,"connect pa_context failed");
++        return;
+     }
+ 
+     if (pa_threaded_mainloop_start(m_paThreadMainLoop) < 0) {
++        pa_context_disconnect(m_paContext);
+         pa_context_unref(m_paContext);
++        pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+         pa_threaded_mainloop_free(m_paThreadMainLoop);
+         USD_LOG(LOG_WARNING,"pa_threaded_mainloop_start failed");
++        return;
+     }
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+@@ -198,9 +203,15 @@ void PulseAudioManager::updateSinkInfo(const pa_sink_info* i)
+     sink->index = i->index;
+     sink->channelMap = i->channel_map;
+     sink->balance = pa_cvolume_get_balance(&i->volume, &i->channel_map) * 100.0;
++    sink->isDefault = (sink->name == m_defaultSinkName);
+     if (sink->isDefault) {
++        if (m_defaultSink.isNull()) {
++            m_defaultSink = PaObjectPtr(new PaObject);
++        }
++        m_defaultSink = sink;
+         Q_EMIT sinkVolumeChanged(volForPulseVol(sink->volume));
+         Q_EMIT sinkMuteChanged(sink->mute);
++        USD_LOG(LOG_DEBUG, "id : %d %s change volume to %d", sink->index, sink->name.toLatin1().data(), volForPulseVol(sink->volume));
+     }
+ }
+ 
+@@ -222,30 +233,27 @@ void PulseAudioManager::updateSourceInfo(const pa_source_info* i)
+     source->index = i->index;
+     source->channelMap = i->channel_map;
+     source->balance = pa_cvolume_get_balance(&i->volume, &i->channel_map);
++    source->isDefault = (source->name == m_defaultSourceName);
++    if (source->isDefault) {
++        if (m_defaultSource.isNull()) {
++            m_defaultSource = PaObjectPtr(new PaObject);
++        }
++        m_defaultSource = source;
++    }
+ }
+ 
+ void PulseAudioManager::updateDefault(const pa_server_info *i)
+ {
+     QMutexLocker locker(&m_mutex);
+-    Q_FOREACH (auto& sink, m_sinkList) {
+-        if (sink->name == QString::fromLatin1(i->default_sink_name)) {
+-            sink->isDefault = true;
+-            m_sinkIndex = sink->index;
+-            Q_EMIT sinkVolumeChanged(volForPulseVol(sink->volume));
+-            Q_EMIT sinkMuteChanged(sink->mute);
+-        } else {
+-            sink->isDefault = false;
+-        }
+-    }
++    //get sink info by name
++    m_defaultSinkName = QString::fromLatin1(i->default_sink_name);
++    pa_operation* o = pa_context_get_sink_info_by_name(m_paContext, i->default_sink_name, &PulseAudioManager::sinkInfoCallback, this);
++    pa_operation_unref(o);
+ 
+-    Q_FOREACH (auto& source, m_sourceList) {
+-        if (source->name == QString::fromLatin1(i->default_source_name)) {
+-            source->isDefault = true;
+-            m_sourceIndex = source->index;
+-        } else {
+-            source->isDefault = false;
+-        }
+-    }
++    //get source info by name
++    m_defaultSourceName = QString::fromLatin1(i->default_source_name);
++    o = pa_context_get_source_info_by_name(m_paContext, i->default_source_name, &PulseAudioManager::sourceInfoCallback, this);
++    pa_operation_unref(o);
+ }
+ 
+ uint32_t PulseAudioManager::volToPulseVol(int value)
+@@ -283,21 +291,20 @@ void PulseAudioManager::setSinkVolume(int value)
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
+     pa_cvolume volume;
+     pa_cvolume_init(&volume);
+-    pa_cvolume_set(&volume, m_sinkList.value(m_sinkIndex)->channels, volToPulseVol(value));
+-    pa_cvolume_set_balance(&volume, &m_sinkList.value(m_sinkIndex)->channelMap, m_sinkList.value(m_sinkIndex)->balance / 100.0);
++    pa_cvolume_set(&volume, m_defaultSink->channels, volToPulseVol(value));
++    pa_cvolume_set_balance(&volume, &m_defaultSink->channelMap, m_defaultSink->balance / 100.0);
+ 
+     pa_operation* o;
+-    o = pa_context_set_sink_volume_by_index(m_paContext, m_sinkIndex, &volume, nullptr, nullptr);
++    o = pa_context_set_sink_volume_by_index(m_paContext, m_defaultSink->index, &volume, nullptr, nullptr);
+     pa_operation_unref(o);
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+-
+ }
+ 
+ void PulseAudioManager::setSinkMute(bool mute)
+ {
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
+     pa_operation* o;
+-    o = pa_context_set_sink_mute_by_index(m_paContext, m_sinkIndex, mute, nullptr, nullptr);
++    o = pa_context_set_sink_mute_by_index(m_paContext, m_defaultSink->index, mute, nullptr, nullptr);
+     pa_operation_unref(o);
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+@@ -306,7 +313,7 @@ void PulseAudioManager::setSourceMute(bool mute)
+ {
+     pa_threaded_mainloop_lock(m_paThreadMainLoop);
+     pa_operation* o;
+-    o = pa_context_set_source_mute_by_index(m_paContext, m_sourceIndex, mute, nullptr, nullptr);
++    o = pa_context_set_source_mute_by_index(m_paContext, m_defaultSource->index, mute, nullptr, nullptr);
+     pa_operation_unref(o);
+     pa_threaded_mainloop_unlock(m_paThreadMainLoop);
+ }
+@@ -314,18 +321,18 @@ void PulseAudioManager::setSourceMute(bool mute)
+ uint PulseAudioManager::getSinkVolume()
+ {
+     QMutexLocker locker(&m_mutex);
+-    return volForPulseVol(m_sinkList.value(m_sinkIndex)->volume);
++    return volForPulseVol(m_defaultSink->volume);
+ }
+ 
+ bool PulseAudioManager::getSinkMute()
+ {
+     QMutexLocker locker(&m_mutex);
+-    return m_sinkList.value(m_sinkIndex)->mute;
++    return m_defaultSink->mute;
+ }
+ 
+ bool PulseAudioManager::getSourceMute()
+ {
+     QMutexLocker locker(&m_mutex);
+-    return m_sourceList.value(m_sourceIndex)->mute;
++    return m_defaultSource->mute;
+ }
+ 
+diff --git a/plugins/media-keys/pulseaudiomanager.h b/plugins/media-keys/pulseaudiomanager.h
+index 821f4cd..8209427 100644
+--- a/plugins/media-keys/pulseaudiomanager.h
++++ b/plugins/media-keys/pulseaudiomanager.h
+@@ -44,6 +44,18 @@ struct PaObject
+     int balance;
+     pa_volume_t volume;
+     pa_channel_map channelMap;
++
++    PaObject operator =(const PaObject& other) {
++        this->description = other.description;
++        this->name = other.name;
++        this->channels = other.channels;
++        this->mute = other.mute;
++        this->volume = other.volume;
++        this->index = other.index;
++        this->channelMap = other.channelMap;
++        this->balance = other.balance;
++        return *this;
++    }
+ };
+ 
+ typedef QSharedPointer<PaObject> PaObjectPtr;
+@@ -84,17 +96,19 @@ protected:
+     static void contextStateCallback(pa_context *c, void *data);
+     static void sucessCallback(pa_context *c, int success, void *data);
+ private:
+-    pa_threaded_mainloop *m_paThreadMainLoop;
+-    pa_context *m_paContext;
+-    pa_mainloop_api *m_paMainloopApi;
++    pa_threaded_mainloop *m_paThreadMainLoop = nullptr;
++    pa_context *m_paContext = nullptr;
++    pa_mainloop_api *m_paMainloopApi = nullptr;
++
++    PaObjectPtr m_defaultSink;
++    PaObjectPtr m_defaultSource;
++    QString m_defaultSinkName;
++    QString m_defaultSourceName;
+ 
+-    uint32_t m_sinkIndex;
+-    uint32_t m_sourceIndex;
+     QMap<uint32_t, PaObjectPtr> m_sinkList;
+     QMap<uint32_t, PaObjectPtr> m_sourceList;
+     QMutex m_mutex;
+-    QString m_defaultSinkName;
+-    QString m_defaultSourceName;
++
+ Q_SIGNALS:
+     void sinkVolumeChanged(int);
+     void sinkMuteChanged(bool);

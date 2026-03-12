@@ -1,0 +1,4 @@
+#ifndef USDDICTIONARY_H
+#define USDDICTIONARY_H
+
+#endif // USDDICTIONARY_H
